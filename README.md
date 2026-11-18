@@ -1,49 +1,43 @@
 # Social Media Hub
 
-Modularer, mehrmarkenfähiger Social-Media-Management-Hub für WordPress. Derzeit befindet sich das Projekt in der **Konzept- und UI-Prototypenphase**.
+Modularer und mehrmarkenfähiger Social-Media-Management-Hub für WordPress, aktuell als **interaktiver HTML-Konzeptprototyp**. Eine produktive WordPress-Plugin-Version oder echte API-Veröffentlichung existiert noch nicht.
 
-> **Aktueller Stand: V0.2 · 18. November 2026.** Es handelt sich **noch nicht** um ein WordPress-Plugin. Echte Plattformverbindungen, automatische Veröffentlichung und produktive Terminplanung sind **nicht implementiert**.
+## Aktueller Entwicklungsstand
 
-## Schnellstart – V0.2
+**V0.2 · 18. November 2026**
 
-1. [HTML-Prototyp V0.2 herunterladen](prototypes/v0.2/index.html).
-2. Die Datei im Browser öffnen. Es ist kein WordPress nötig.
-3. Unter **Veröffentlichen** einen Beitrag auswählen und alle Plattformvorschauen nebeneinander prüfen.
-4. Kanäle einzeln aktivieren/deaktivieren; Varianten bearbeiten. Automatische Veröffentlichungen sind **nur simuliert**.
-5. Für einen manuellen Kanal den Text kopieren, extern teilen und **erst danach** die tatsächliche Veröffentlichung bestätigen. Unter **Manuelle Aufgaben** werden offene und bestätigte Übergaben geführt.
+- **[Aktuellen HTML-Prototyp öffnen / herunterladen](index.html)** – zentrale Version im Hauptordner.
+- **[Aktuelles Veröffentlichungskonzept](veroeffentlichung.md)** – Plattformvorschau, Kanalwahl, manuelle Übergabe, technische Grenzen.
 
-Die Demo speichert Beispieldaten bei verfügbarer Speicherfreigabe lokal im Browser. V0.1-Demodaten werden beim ersten Öffnen von V0.2 in ein neues lokales Datenformat übernommen; die alte Kopie bleibt unverändert.
+Zum Testen `index.html` herunterladen und direkt in einem Browser öffnen. Die Anwendung enthält Beispieldaten und simulierte Aktionen. Die Daten liegen bei verfügbarer Browser-Speicherfreigabe lokal; es werden keine echten Konten verbunden und keine Posts veröffentlicht.
 
-## Projektdateien
+## Versionsregel
 
-| Inhalt | Version | Beschreibung |
-| --- | --- | --- |
-| [Interaktiver HTML-Prototyp](prototypes/v0.2/index.html) | **V0.2** | Veröffentlichung, Plattformvarianten, Ziel-Schalter, manuelle Nachweise |
-| [Veröffentlichungskonzept und Recherche](docs/veroeffentlichung-v0.2.md) | **V0.2** | Funktionsmodell, Vergleich mit existierenden Diensten, offene Aufgaben |
-| [Architektur- und Ausbaukonzept](docs/architektur-v0.1.md) | V0.1 | Universeller Kern, modulare Erweiterbarkeit, Marken & Workflows |
-| [HTML-Prototyp – vorheriger Stand](prototypes/v0.1/index.html) | V0.1 | Erster Dashboard- und Redaktionsprototyp |
+**Die aktuelle Version liegt immer im Hauptordner.** Sie trägt die dauerhaft gleichbleibenden Namen `index.html` und `veroeffentlichung.md`. Sobald eine neue Version freigegeben wird, werden die alten Dateien zuerst im Archiv gesichert und danach die aktuellen Dateien ersetzt.
 
-## Grundprinzipien
+| Bereich | Inhalt |
+| --- | --- |
+| [`index.html`](index.html) | Immer der neueste benutzbare HTML-Prototyp |
+| [`veroeffentlichung.md`](veroeffentlichung.md) | Aktuelles Funktions- und Veröffentlichungskonzept |
+| [`versionen/`](versionen/) | Abgeschlossene ältere Entwicklungsstände |
+| [`versionen/v0.1/`](versionen/v0.1/) | Ursprünglicher HTML-Prototyp und Architektur V0.1 |
 
-- **Ein Beitragsverbund, viele Zielversionen:** Ein Beitrag kann verschiedene Texte, Medienvarianten, Termine und Veröffentlichungsstatus besitzen.
-- **Mehrmarkenfähig:** Trennung eigener Marken, Kundenmarken, Konten, Medien, Team- und Freigaberollen.
-- **Getrennte Veröffentlichungsziele:** Der spätere Sammelbefehl startet pro API-Ziel einen eigenen kontrollierbaren Auftrag.
-- **Manuelle Übergabe integriert:** WhatsApp-Kanäle und andere manuelle Ziele bleiben in Planung, Status und Dokumentation sichtbar.
-- **Capabilities statt Plattform-Hardcoding:** Die spätere Adapter-Schnittstelle entscheidet anhand verfügbarer Funktionen, ob Auto-/Manual-Publishing möglich ist.
-- **Nachvollziehbarkeit:** Freigaben, Fehler, Wiederholungen und manuelle Bestätigungen mit Zeitstempeln und Ereignishistorie.
-- **WordPress-kompatibel und eigenständig:** Als eigenes Plugin gedacht, später optional mit dem universellen Business Hub kombinierbar.
+Die Git-Historie ist zusätzlich zur Archivstruktur die technische Änderungshistorie.
 
-## Nächste Arbeitsschritte
+## Leitlinien der Weiterentwicklung
 
-1. Bedienoberfläche, Vorschauen und manuelle Übergabe anhand echter Alltagsszenarien verbessern.
-2. Medienformate je Plattform, Textvalidierung, Alt-Texte, Rechts-/Freigabechecks und Publikationsstatus konzipieren.
-3. Klares Server-Datenmodell, Berechtigungskonzept, Queue und OAuth-/Provider-Architektur spezifizieren.
-4. Produktives WordPress-Plugin **erst nach gesonderter Freigabe** implementieren.
+- **Ein Inhalt, mehrere Plattformvarianten:** individuelle Texte, Medienformate, Vorschauen und Status pro Ziel.
+- **Automatische und manuelle Veröffentlichung:** gemeinsame Planung; separate Ausführung und Nachweiserfassung, z. B. für WhatsApp-Kanäle.
+- **Marken, Teams und Kunden:** strukturell getrennt, künftig rollenbasiert.
+- **Plattform-Adapter:** Funktionalität je Netzwerk statt starre plattformgebundene Annahmen.
+- **Zuverlässigkeit:** einzelne Publish-Aufträge, Fehlerzustände, Wiederholungen und nachvollziehbare Historie.
+- **Modularität:** spätere Erweiterung als eigenständiges WordPress-Plugin, optional Teil eines Business Hubs.
 
-## Projektablage
+## Ablage auf Google Drive
 
-Zusätzliche Screenshots, Sicherungen und Arbeitsunterlagen liegen in Google Drive: [Plugins / Social Media Hub / Entwicklung und Prototyp](https://drive.google.com/drive/folders/1RQmw3oXuCPuqezNxAiPWtlnTfMUz9Yb2).
+- [Social Media Hub – Hauptordner (aktuelle Version)](https://drive.google.com/drive/folders/1lOKF7jPTpWbuySNygNy89upOaEFR1557)
+- [Versionen – archivierte Stände](https://drive.google.com/drive/folders/1krrzK3Z8kws-fNTXwpxCwSB0dAZfyw0j)
 
-**Sicherheit:** Dieses Repository ist öffentlich. Keine Tokens, Passwörter, privaten Kontaktlisten oder Kundendaten einchecken.
+Dieses Repository ist öffentlich. Keine Tokens, Passwörter, geschützten Kundendaten oder sonstigen Geheimnisse committen.
 
-**Lizenz:** Noch nicht festgelegt.
+**Lizenz:** noch nicht festgelegt.
