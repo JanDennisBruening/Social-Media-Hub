@@ -1,43 +1,25 @@
-# Social Media Hub
+# Social Media Hub – Eigenständiges WordPress-Plugin (`v1.0.0`)
 
-Modularer und mehrmarkenfähiger Social-Media-Management-Hub für WordPress, aktuell als **interaktiver HTML-Konzeptprototyp**. Eine produktive WordPress-Plugin-Version oder echte API-Veröffentlichung existiert noch nicht.
+Eigenständiges, mehrmarkenfähiges WordPress-Backend-Plugin zur Gestaltung, Vorprüfung, Ausspielung, manuellen Übergabe (z. B. WhatsApp-Kanäle) und revisionssicheren Dokumentation von Social-Media-Beitragsverbünden – inklusive **Komplett-Export (JSON + CSV)**.
 
-## Aktueller Entwicklungsstand
+---
 
-**V0.2 · 18. November 2026**
+## 1. Kernmerkmale im Überblick
 
-- **[Aktuellen HTML-Prototyp öffnen / herunterladen](index.html)** – zentrale Version im Hauptordner.
-- **[Aktuelles Veröffentlichungskonzept](veroeffentlichung.md)** – Plattformvorschau, Kanalwahl, manuelle Übergabe, technische Grenzen.
-
-Zum Testen `index.html` herunterladen und direkt in einem Browser öffnen. Die Anwendung enthält Beispieldaten und simulierte Aktionen. Die Daten liegen bei verfügbarer Browser-Speicherfreigabe lokal; es werden keine echten Konten verbunden und keine Posts veröffentlicht.
-
-## Versionsregel
-
-**Die aktuelle Version liegt immer im Hauptordner.** Sie trägt die dauerhaft gleichbleibenden Namen `index.html` und `veroeffentlichung.md`. Sobald eine neue Version freigegeben wird, werden die alten Dateien zuerst im Archiv gesichert und danach die aktuellen Dateien ersetzt.
-
-| Bereich | Inhalt |
-| --- | --- |
-| [`index.html`](index.html) | Immer der neueste benutzbare HTML-Prototyp |
-| [`veroeffentlichung.md`](veroeffentlichung.md) | Aktuelles Funktions- und Veröffentlichungskonzept |
-| [`versionen/`](versionen/) | Abgeschlossene ältere Entwicklungsstände |
-| [`versionen/v0.1/`](versionen/v0.1/) | Ursprünglicher HTML-Prototyp und Architektur V0.1 |
-
-Die Git-Historie ist zusätzlich zur Archivstruktur die technische Änderungshistorie.
-
-## Leitlinien der Weiterentwicklung
-
-- **Ein Inhalt, mehrere Plattformvarianten:** individuelle Texte, Medienformate, Vorschauen und Status pro Ziel.
-- **Automatische und manuelle Veröffentlichung:** gemeinsame Planung; separate Ausführung und Nachweiserfassung, z. B. für WhatsApp-Kanäle.
-- **Marken, Teams und Kunden:** strukturell getrennt, künftig rollenbasiert.
-- **Plattform-Adapter:** Funktionalität je Netzwerk statt starre plattformgebundene Annahmen.
-- **Zuverlässigkeit:** einzelne Publish-Aufträge, Fehlerzustände, Wiederholungen und nachvollziehbare Historie.
-- **Modularität:** spätere Erweiterung als eigenständiges WordPress-Plugin, optional Teil eines Business Hubs.
-
-## Ablage auf Google Drive
-
-- [Social Media Hub – Hauptordner (aktuelle Version)](https://drive.google.com/drive/folders/1lOKF7jPTpWbuySNygNy89upOaEFR1557)
-- [Versionen – archivierte Stände](https://drive.google.com/drive/folders/1krrzK3Z8kws-fNTXwpxCwSB0dAZfyw0j)
-
-Dieses Repository ist öffentlich. Keine Tokens, Passwörter, geschützten Kundendaten oder sonstigen Geheimnisse committen.
-
-**Lizenz:** noch nicht festgelegt.
+- **100 % eigenständig & unabhängig von WordPress-Blogbeiträgen:**
+  Nutzt WordPress als sichere Laufzeitumgebung (Authentifizierung, Rollen, Datenbankverbindung, REST-API), speichert aber alle Inhalte in **10 eigenen, indizierten Custom Tables** (`{prefix}smh_...`).
+- **Fokus auf den Social-Media-Klassiker (ohne YouTube-Upload-Ballast):**
+  Bild(er) / Kurzvideo + Caption + Hashtag-Bausteine + optionaler Verweis-Link (z. B. um auf ein neues YouTube-Video oder eine Aktion hinzuweisen).
+- **Clevere Link- & YouTube-Verweis-Logik:**
+  Hängt einen hinterlegten Link auf klickbaren Kanälen (Facebook, LinkedIn, WhatsApp-Kanal, Telegram, Bluesky, Mastodon, Threads) direkt an und warnt auf Instagram automatisch mit dem Hinweis *„Link in der Bio“*.
+- **Steckmodul-Architektur für 11 Kanäle (`ProviderRegistry`):**
+  Instagram, Facebook-Seite, LinkedIn (Persönliches Profil & Unternehmensseite getrennt), Threads, TikTok, Pinterest, Bluesky, Mastodon, Telegram-Kanal, WhatsApp-Kanal und Signal.
+- **Volle Kompatibilität mit `JDB Wartungsmodus` & JDB-Plugins:**
+  Greift nicht in das öffentliche Frontend (`template_redirect`) ein, lädt CSS/JS strikt nur auf der eigenen Backend-Seite (`toplevel_page_social-media-hub`) und gibt seine REST-Endpunkte (`/wp-json/social-hub/v1/...`) gezielt für berechtigte Rollen sowie HMAC-signierte Medien-Pulls frei.
+- **Sicherheit, Transport, Abgleich & Automatisierung (Bereiche 1, 2 und A–D):**
+  1. **Unveränderliche Revisions-Snapshots (`smh_revisions`):** Friert bei Freigabe und Versand den exakten Text- und Medienstand unveränderlich ein.
+  2. **Komplett-Export & Umzugs-Paket (`BackupExporter`):** Exportiert alle Marken, Kanäle (**ohne geheime Tokens**), Medien-Manifeste (inkl. Zuschnitten & Alt-Texten), Textbausteine, Beiträge, Revisionen und Nachweise als JSON-Paket oder CSV-Archivliste.
+  3. **Verschlüsselter Zugangsdaten-Tresor (`TokenSafe`):** Serverseitige Verschlüsselung über Libsodium (`sodium_crypto_secretbox`) bzw. `AES-256-GCM`.
+  4. **Zwei Medien-Transportwege:** Direkter Datei-Push sowie kurzlebige, HMAC-signierte Abhol-Links (`SignedMediaEndpoint`, 15 Min. TTL) für Pull-APIs wie Instagram/Meta.
+  5. **Idempotente Queue & Einzel-Retry (`PublishQueueWorker`):** Verhindert bei einem Retry nach Teilversagen zu 100 % doppelte Posts auf bereits erfolgreichen Kanälen.
+  6. **48-Stunden-Vorab-Check (`PreflightService`):** Prüft 48 Stunden vor geplanten Beiträgen alle OAuth-Zugänge auf Ablauf.
