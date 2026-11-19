@@ -1,7 +1,11 @@
 <?php
 /**
- * Zentrale Repository-Schicht für Marken, Konten, Medien, Snippets, Beitragsverbünde,
- * Varianten, Revisions-Snapshots, Queue-Jobs, Manuelle Nachweise und Audit-Events.
+ * Zentrale Repository-Schicht (v2.0.0) für Marken, Konten, Medien, Textbausteine,
+ * Beitragsverbünde, Varianten, Revisions-Snapshots, Queue-Jobs, Nachweise und Audit-Events.
+ *
+ * Grundsatz v2.0.0:
+ * Startet 100 % sauber und frei von Demo-Einträgen – der Nutzer beginnt wie am ersten Tag.
+ * Enthält vollständige CRUD-, Mehrfachauswahl-, Verschiebe-, Duplizier- und Lösch-Operationen.
  *
  * @package SocialMediaHub\Infrastructure\Database
  */
@@ -14,6 +18,9 @@ use SocialMediaHub\Infrastructure\Security\TokenSafe;
 
 class Repositories
 {
+    private const STATE_OPTION        = 'smh_repository_state';
+    private const DATA_VERSION_OPTION = 'smh_data_version';
+
     /** @var array<string, mixed> */
     private array $state;
     private TokenSafe $tokenSafe;
@@ -21,27 +28,47 @@ class Repositories
     public function __construct(?TokenSafe $tokenSafe = null, ?array $initialState = null)
     {
         $this->tokenSafe = $tokenSafe ?? new TokenSafe();
-        $this->state = $initialState ?? $this->loadPersistedOrDefaultState();
+        $this->state = $initialState ?? $this->loadPersistedOrEmptyState();
     }
 
     /**
+     * Lädt den gespeicherten Zustand oder legt einen komplett sauberen, leeren Arbeitsbereich an.
+     * Beim Upgrade von v1.0.0 auf v2.0.0 werden alte, unveränderte v1.0-Demo-Seeddaten
+     * einmalig entfernt, damit der Hub sauber und frei von Demo-Müll startet.
+     *
      * @return array<string, mixed>
      */
-    public function loadPersistedOrDefaultState(): array
+    public function loadPersistedOrEmptyState(): array
     {
         if (function_exists('get_option')) {
-            $saved = get_option('smh_repository_state', null);
-            if (is_array($saved) && !empty($saved['brands'])) {
-                return $saved;
+            $dataVersion = (string) get_option(self::DATA_VERSION_OPTION, '');
+            $saved = get_option(self::STATE_OPTION, null);
+
+            if ($dataVersion !== '2.0.0') {
+                if (is_array($saved) && $this->isLegacyV1DemoState($saved)) {
+                    $clean = $this->createEmptyWorkspaceState();
+                    update_option(self::STATE_OPTION, $clean, false);
+                    update_option(self::DATA_VERSION_OPTION, '2.0.0', false);
+                    return $clean;
+                }
+                if (function_exists('update_option')) {
+                    update_option(self::DATA_VERSION_OPTION, '2.0.0', false);
+                }
+            }
+
+            if (is_array($saved) && isset($saved['schema_version'])) {
+                return $this->ensureStateShape($saved);
             }
         }
-        return $this->createDefaultSeedState();
+
+        return $this->createEmptyWorkspaceState();
     }
 
     public function persist(): void
     {
         if (function_exists('update_option')) {
-            update_option('smh_repository_state', $this->state, false);
+            update_option(self::STATE_OPTION, $this->state, false);
+            update_option(self::DATA_VERSION_OPTION, '2.0.0', false);
         }
     }
 
@@ -53,569 +80,131 @@ class Repositories
         return $this->state;
     }
 
-    public function resetToSeed(): void
+    /**
+     * Setzt den gesamten Arbeitsbereich auf den komplett leeren, sauberen Ausgangszustand zurück.
+     */
+    public function resetToEmpty(): void
     {
-        $this->state = $this->createDefaultSeedState();
+        $this->state = $this->createEmptyWorkspaceState();
         $this->persist();
     }
 
     /**
+     * Erzeugt einen komplett sauberen, leeren Arbeitsbereich ohne Demo-Beiträge oder Fake-Konten.
+     *
      * @return array<string, mixed>
      */
-    public function createDefaultSeedState(): array
+    public function createEmptyWorkspaceState(): array
     {
         $now = gmdate('Y-m-d\TH:i:s\Z');
-        $tomorrow10 = gmdate('Y-m-d\T10:00:00\Z', time() + 86400);
-        $inTwoDays14 = gmdate('Y-m-d\T14:00:00\Z', time() + 2 * 86400);
-        $inThreeDays17 = gmdate('Y-m-d\T17:00:00\Z', time() + 3 * 86400);
 
         return [
-            'schema_version' => 1,
+            'schema_version' => 2,
             'brands' => [
                 [
-                    'id'                => 'jan',
-                    'slug'              => 'jan-design-digital',
-                    'name'              => 'Jan Design Digital',
-                    'color'             => '#586EE7',
-                    'description'       => 'Personenmarke · Gestaltung, klare Systeme & Digitalität',
-                    'require_approval'  => false,
-                    'allowed_user_ids'  => [1, 2],
-                    'default_utm'       => ['utm_source' => '{platform}', 'utm_medium' => 'social'],
-                ],
-                [
-                    'id'                => 'nui',
-                    'slug'              => 'nui',
-                    'name'              => 'NUI',
-                    'color'             => '#15876E',
-                    'description'       => 'Digitalbegleiter · Neue Perspektiven & KI im Alltag',
-                    'require_approval'  => true,
-                    'allowed_user_ids'  => [1, 2],
-                    'default_utm'       => ['utm_source' => '{platform}', 'utm_medium' => 'social'],
-                ],
-                [
-                    'id'                => 'demo_client',
-                    'slug'              => 'kundenprojekt-demo',
-                    'name'              => 'Kundenprojekt (Mandant)',
-                    'color'             => '#8263A7',
-                    'description'       => 'Getrennter Kundenbereich mit Mandanten-Freigaberolle',
-                    'require_approval'  => true,
-                    'allowed_user_ids'  => [99],
-                    'default_utm'       => ['utm_source' => '{platform}', 'utm_medium' => 'social'],
+                    'id'               => 'default',
+                    'slug'             => 'standard',
+                    'name'             => 'Hauptprofil',
+                    'color'            => '#586EE7',
+                    'description'      => 'Standard-Arbeitsbereich (kann jederzeit umbenannt oder um weitere Marken ergänzt werden)',
+                    'require_approval' => false,
+                    'allowed_user_ids' => [],
+                    'default_utm'      => ['utm_source' => '{platform}', 'utm_medium' => 'social'],
+                    'created_at'       => $now,
                 ],
             ],
-            'accounts' => [
-                [
-                    'id'                => 'acc_ig_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'instagram',
-                    'account_type'      => 'business',
-                    'handle'            => '@jan.design.digital',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['instagram_basic', 'instagram_content_publish'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'ig_live_token_9821']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 30 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_li_person',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'linkedin',
-                    'account_type'      => 'person',
-                    'handle'            => 'Jan Dennis Brüning (Profil)',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['w_member_social'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'li_person_token_4410', 'refresh_token' => 'li_ref_4410']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 45 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_li_company',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'linkedin',
-                    'account_type'      => 'organization',
-                    'handle'            => 'Jan Design Digital (Unternehmensseite)',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'expired',
-                    'granted_scopes'    => [],
-                    'encrypted_secrets' => '',
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() - 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_fb_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'facebook',
-                    'account_type'      => 'page',
-                    'handle'            => 'Jan Design Digital (Facebook-Seite)',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['pages_manage_posts', 'pages_read_engagement'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'fb_page_token_7712']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 60 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_wa_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'whatsapp',
-                    'account_type'      => 'channel',
-                    'handle'            => 'Digital-Tipps Südwestpfalz (WhatsApp-Kanal)',
-                    'auth_mode'         => 'manual_handoff',
-                    'connection_state'  => 'manual',
-                    'granted_scopes'    => [],
-                    'encrypted_secrets' => '',
-                    'token_expires_at'  => null,
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_tiktok_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'tiktok',
-                    'account_type'      => 'creator',
-                    'handle'            => '@jan.design.digital (TikTok)',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'handoff_only',
-                    'granted_scopes'    => ['video.upload'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'tt_upload_token_3109']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 14 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_pin_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'pinterest',
-                    'account_type'      => 'business',
-                    'handle'            => '@jandesigndigital (Pinterest)',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['boards:read', 'pins:write'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'pin_v5_token_5501']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 30 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_bsky_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'bluesky',
-                    'account_type'      => 'atproto',
-                    'handle'            => '@jandesigndigital.bsky.social',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['com.atproto.repo.createRecord'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'bsky_app_pwd_6612']),
-                    'token_expires_at'  => null,
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_masto_jan',
-                    'brand_id'          => 'jan',
-                    'platform'          => 'mastodon',
-                    'account_type'      => 'instance',
-                    'handle'            => '@jan@mastodon.social',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['write:statuses', 'write:media'],
-                    'instance_limits'   => ['max_chars' => 500, 'max_media' => 4],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'masto_tok_1190']),
-                    'token_expires_at'  => null,
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_ig_nui',
-                    'brand_id'          => 'nui',
-                    'platform'          => 'instagram',
-                    'account_type'      => 'business',
-                    'handle'            => '@nui.digital',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['instagram_basic', 'instagram_content_publish'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'ig_nui_tok_2201']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 25 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_threads_nui',
-                    'brand_id'          => 'nui',
-                    'platform'          => 'threads',
-                    'account_type'      => 'profile',
-                    'handle'            => '@nui.digital (Threads)',
-                    'auth_mode'         => 'direct_credentials',
-                    'connection_state'  => 'connected',
-                    'granted_scopes'    => ['threads_basic', 'threads_content_publish'],
-                    'encrypted_secrets' => $this->tokenSafe->encryptSecrets(['access_token' => 'th_nui_tok_2202']),
-                    'token_expires_at'  => gmdate('Y-m-d\TH:i:s\Z', time() + 25 * 86400),
-                    'last_checked_at'   => $now,
-                ],
-                [
-                    'id'                => 'acc_tg_nui',
-                    'brand_id'          => 'nui',
-                    'platform'          => 'telegram',
-                    'account_type'      => 'channel',
-                    'handle'            => 'NUI Neuigkeiten (Telegram-Kanal)',
-                    'auth_mode'         => 'manual_handoff',
-                    'connection_state'  => 'manual',
-                    'granted_scopes'    => [],
-                    'encrypted_secrets' => '',
-                    'token_expires_at'  => null,
-                    'last_checked_at'   => $now,
-                ],
-            ],
-            'media_assets' => [
-                [
-                    'id'               => 'med_keyvisual',
-                    'brand_id'         => 'jan',
-                    'name'             => 'Leitidee-Keyvisual.jpg',
-                    'kind'             => 'image',
-                    'mime_type'        => 'image/jpeg',
-                    'emoji'            => '✨',
-                    'width_px'         => 2400,
-                    'height_px'        => 3000,
-                    'duration_sec'     => 0,
-                    'alt_text'         => 'Schreibtisch mit Skizzenbuch, Farbpalette und Laptop im warmen Morgenlicht – Symbolbild für digitale Gestaltung.',
-                    'copyright_notice' => 'Eigenes Werk · Jan Design Digital',
-                    'renditions'       => [
-                        '4:5'  => ['width' => 1080, 'height' => 1350, 'ready' => true],
-                        '1:1'  => ['width' => 1080, 'height' => 1080, 'ready' => true],
-                        '9:16' => ['width' => 1080, 'height' => 1920, 'ready' => true],
-                        '2:3'  => ['width' => 1000, 'height' => 1500, 'ready' => true],
-                        '16:9' => ['width' => 1920, 'height' => 1080, 'ready' => true],
-                    ],
-                ],
-                [
-                    'id'               => 'med_yt_teaser',
-                    'brand_id'         => 'jan',
-                    'name'             => 'YouTube-Folge-Teaserbild.jpg',
-                    'kind'             => 'image',
-                    'mime_type'        => 'image/jpeg',
-                    'emoji'            => '▶️',
-                    'width_px'         => 1080,
-                    'height_px'        => 1350,
-                    'duration_sec'     => 0,
-                    'alt_text'         => 'Vorschaubild zur neuen YouTube-Folge über klare digitale Systeme.',
-                    'copyright_notice' => 'Eigenes Werk · Jan Design Digital',
-                    'renditions'       => [
-                        '4:5'  => ['width' => 1080, 'height' => 1350, 'ready' => true],
-                        '1:1'  => ['width' => 1080, 'height' => 1080, 'ready' => true],
-                        '16:9' => ['width' => 1920, 'height' => 1080, 'ready' => true],
-                    ],
-                ],
-                [
-                    'id'               => 'med_reel_916',
-                    'brand_id'         => 'jan',
-                    'name'             => 'Impuls-Reel-9x16.mp4',
-                    'kind'             => 'video',
-                    'mime_type'        => 'video/mp4',
-                    'emoji'            => '🎞️',
-                    'width_px'         => 1080,
-                    'height_px'        => 1920,
-                    'duration_sec'     => 38,
-                    'alt_text'         => 'Kurzvideo mit drei Impulsen für digitale Gestaltung.',
-                    'copyright_notice' => 'Eigenes Werk · Jan Design Digital',
-                    'renditions'       => [
-                        '9:16'  => ['width' => 1080, 'height' => 1920, 'ready' => true],
-                        'cover' => ['width' => 1080, 'height' => 1920, 'ready' => true],
-                    ],
-                ],
-                [
-                    'id'               => 'med_pdf_guide',
-                    'brand_id'         => 'jan',
-                    'name'             => 'Leitfaden-Kurzfassung.pdf',
-                    'kind'             => 'document',
-                    'mime_type'        => 'application/pdf',
-                    'emoji'            => '📑',
-                    'width_px'         => 1080,
-                    'height_px'        => 1080,
-                    'duration_sec'     => 0,
-                    'alt_text'         => 'PDF-Leitfaden mit 6 kompakten Folien zur Zugangssicherheit.',
-                    'copyright_notice' => 'Eigenes Werk · Jan Design Digital',
-                    'renditions'       => [
-                        'pdf' => ['pages' => 6, 'ready' => true],
-                    ],
-                ],
-                [
-                    'id'               => 'med_nui_intro',
-                    'brand_id'         => 'nui',
-                    'name'             => 'NUI-Vorstellung-Motiv.jpg',
-                    'kind'             => 'image',
-                    'mime_type'        => 'image/jpeg',
-                    'emoji'            => '🤖',
-                    'width_px'         => 1080,
-                    'height_px'        => 1350,
-                    'duration_sec'     => 0,
-                    'alt_text'         => 'Illustration des digitalen Begleiters NUI.',
-                    'copyright_notice' => 'NUI Digital',
-                    'renditions'       => [
-                        '4:5' => ['width' => 1080, 'height' => 1350, 'ready' => true],
-                        '1:1' => ['width' => 1080, 'height' => 1080, 'ready' => true],
-                    ],
-                ],
-            ],
-            'snippets' => [
-                [
-                    'id'           => 'snip_hashtags_jan',
-                    'brand_id'     => 'jan',
-                    'title'        => 'Klassiker-Hashtags · Gestaltung & Digitalität',
-                    'snippet_type' => 'hashtags',
-                    'content'      => '#DigitaleGestaltung #Webdesign #KlareSysteme #Südwestpfalz #JanDesignDigital',
-                ],
-                [
-                    'id'           => 'snip_youtube_cta',
-                    'brand_id'     => 'jan',
-                    'title'        => 'Hinweis-Baustein · Neues YouTube-Video',
-                    'snippet_type' => 'cta',
-                    'content'      => '▶️ Das komplette Video findest du jetzt auf meinem YouTube-Kanal – schau gern rein!',
-                ],
-                [
-                    'id'           => 'snip_hashtags_nui',
-                    'brand_id'     => 'nui',
-                    'title'        => 'NUI Basis-Hashtags',
-                    'snippet_type' => 'hashtags',
-                    'content'      => '#NUI #Digitalbegleiter #KünstlicheIntelligenz #DigitaleZukunft',
-                ],
-            ],
-            'post_groups' => [
-                [
-                    'id'                  => 'pg_classic_1',
-                    'brand_id'            => 'jan',
-                    'campaign'            => 'Herbst-Impuls · Digitale Gestaltung',
-                    'title'               => 'Die Welt von heute zusammen gestalten',
-                    'master_text'         => "Gestaltung beginnt mit einer Frage: Was können wir heute sinnvoll verändern? 🌱\n\nDesign, Technik und menschlicher Blick gehören zusammen.\n\n#DigitaleGestaltung #Webdesign #KlareSysteme",
-                    'primary_type'        => 'image',
-                    'primary_media_id'    => 'med_keyvisual',
-                    'external_url'        => 'https://jandesigndigital.de/impulse',
-                    'approval_status'     => 'approved',
-                    'approved_by'         => 1,
-                    'approved_at'         => $now,
-                    'scheduled_at'        => $tomorrow10,
-                    'timezone'            => 'Europe/Berlin',
-                    'current_revision_id' => 'rev_pg_classic_1_v1',
-                    'created_at'          => $now,
-                    'updated_at'          => $now,
-                    'targets'             => ['acc_ig_jan', 'acc_li_person', 'acc_fb_jan', 'acc_wa_jan'],
-                    'variants'            => [
-                        'acc_ig_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'feed',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_keyvisual'],
-                            'rendition_key'   => '4:5',
-                            'metadata'        => ['bio_link_hint' => true],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_li_person' => [
-                            'enabled'         => true,
-                            'format_key'      => 'image',
-                            'text_override'   => "Die Welt von heute zusammen gestalten: Warum fachliches Gestaltungsurteil im digitalen Wandel noch wichtiger wird.\n\n#DigitaleGestaltung #Strategie #Webdesign",
-                            'media_ids'       => ['med_keyvisual'],
-                            'rendition_key'   => '1:1',
-                            'metadata'        => ['identity' => 'person'],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_fb_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'image',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_keyvisual'],
-                            'rendition_key'   => '1:1',
-                            'metadata'        => [],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_wa_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'update',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_keyvisual'],
-                            'rendition_key'   => '1:1',
-                            'metadata'        => [],
-                            'delivery_status' => 'manual_pending',
-                        ],
-                    ],
-                ],
-                [
-                    'id'                  => 'pg_youtube_hint',
-                    'brand_id'            => 'jan',
-                    'campaign'            => 'YouTube-Begleitkommunikation',
-                    'title'               => 'Neues YouTube-Video: Warum einfache Systeme länger halten',
-                    'master_text'         => "Neues Video auf YouTube! ▶️ Ich zeige dir in 8 Minuten, warum schlanke, unabhängige Systeme im Alltag zuverlässiger funktionieren als überladene Alles-Könner.\n\n#YouTubeUpdate #DigitaleSysteme #Webdesign",
-                    'primary_type'        => 'image',
-                    'primary_media_id'    => 'med_yt_teaser',
-                    'external_url'        => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-                    'approval_status'     => 'approved',
-                    'approved_by'         => 1,
-                    'approved_at'         => $now,
-                    'scheduled_at'        => $inTwoDays14,
-                    'timezone'            => 'Europe/Berlin',
-                    'current_revision_id' => 'rev_pg_youtube_hint_v1',
-                    'created_at'          => $now,
-                    'updated_at'          => $now,
-                    'targets'             => ['acc_ig_jan', 'acc_fb_jan', 'acc_li_person', 'acc_wa_jan', 'acc_bsky_jan'],
-                    'variants'            => [
-                        'acc_ig_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'feed',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_yt_teaser'],
-                            'rendition_key'   => '4:5',
-                            'metadata'        => ['bio_link_hint' => true],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_fb_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'link',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_yt_teaser'],
-                            'rendition_key'   => '16:9',
-                            'metadata'        => ['link' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_li_person' => [
-                            'enabled'         => true,
-                            'format_key'      => 'image',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_yt_teaser'],
-                            'rendition_key'   => '16:9',
-                            'metadata'        => ['identity' => 'person', 'link' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_wa_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'update',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_yt_teaser'],
-                            'rendition_key'   => '1:1',
-                            'metadata'        => ['link' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
-                            'delivery_status' => 'manual_pending',
-                        ],
-                        'acc_bsky_jan' => [
-                            'enabled'         => true,
-                            'format_key'      => 'image',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_yt_teaser'],
-                            'rendition_key'   => '16:9',
-                            'metadata'        => ['link' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
-                            'delivery_status' => 'pending',
-                        ],
-                    ],
-                ],
-                [
-                    'id'                  => 'pg_nui_hello',
-                    'brand_id'            => 'nui',
-                    'campaign'            => 'NUI Launch',
-                    'title'               => 'Hallo, ich bin NUI – dein digitaler Begleiter',
-                    'master_text'         => "Hallo! 👋 Ich bin NUI – dein digitaler Begleiter. Gemeinsam entdecken wir neue digitale Möglichkeiten Schritt für Schritt.\n\n#NUI #Digitalbegleiter #KI",
-                    'primary_type'        => 'image',
-                    'primary_media_id'    => 'med_nui_intro',
-                    'external_url'        => 'https://nui.digital',
-                    'approval_status'     => 'pending',
-                    'approved_by'         => null,
-                    'approved_at'         => null,
-                    'scheduled_at'        => $inThreeDays17,
-                    'timezone'            => 'Europe/Berlin',
-                    'current_revision_id' => null,
-                    'created_at'          => $now,
-                    'updated_at'          => $now,
-                    'targets'             => ['acc_ig_nui', 'acc_threads_nui', 'acc_tg_nui'],
-                    'variants'            => [
-                        'acc_ig_nui' => [
-                            'enabled'         => true,
-                            'format_key'      => 'feed',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_nui_intro'],
-                            'rendition_key'   => '4:5',
-                            'metadata'        => ['bio_link_hint' => true],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_threads_nui' => [
-                            'enabled'         => true,
-                            'format_key'      => 'image',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_nui_intro'],
-                            'rendition_key'   => '4:5',
-                            'metadata'        => [],
-                            'delivery_status' => 'pending',
-                        ],
-                        'acc_tg_nui' => [
-                            'enabled'         => true,
-                            'format_key'      => 'message',
-                            'text_override'   => '',
-                            'media_ids'       => ['med_nui_intro'],
-                            'rendition_key'   => '1:1',
-                            'metadata'        => [],
-                            'delivery_status' => 'manual_pending',
-                        ],
-                    ],
-                ],
-            ],
-            'revisions'    => [],
-            'jobs'         => [],
-            'receipts'     => [],
-            'interactions' => [
-                [
-                    'id'         => 'int_1',
-                    'account_id' => 'acc_ig_jan',
-                    'brand_id'   => 'jan',
-                    'author'     => 'Anna Beispiel',
-                    'text'       => 'Sehr klarer Beitrag! Wo finde ich den Link zum neuen YouTube-Video?',
-                    'type'       => 'Kommentar (API)',
-                    'resolved'   => false,
-                    'note'       => '',
-                    'created_at' => $now,
-                ],
-                [
-                    'id'         => 'int_2',
-                    'account_id' => 'acc_threads_nui',
-                    'brand_id'   => 'nui',
-                    'author'     => 'Digitalfan',
-                    'text'       => 'Wann gibt es die nächste Folge mit NUI?',
-                    'type'       => 'Antwort (API)',
-                    'resolved'   => false,
-                    'note'       => 'Hinweis auf Freitags-Post vorbereiten.',
-                    'created_at' => $now,
-                ],
-            ],
+            'accounts'         => [],
+            'media_assets'     => [],
+            'snippets'         => [],
+            'post_groups'      => [],
+            'revisions'        => [],
+            'jobs'             => [],
+            'receipts'         => [],
+            'interactions'     => [],
             'automation_rules' => [
                 [
                     'id'      => 'rule_auto_queue_on_approval',
-                    'name'    => 'Automatisch nach Freigabe in die Versand-Warteschlange einreihen',
-                    'detail'  => 'Sobald ein Beitragsverbund freigegeben wird, werden alle grünen API-Ziele zum geplanten Termin eingereiht.',
+                    'name'    => 'Automatisch nach Freigabe zum Wunschtermin einplanen',
+                    'detail'  => 'Reiht alle verbundenen API-Kanäle automatisch in die Versand-Warteschlange ein.',
                     'enabled' => true,
                 ],
                 [
                     'id'      => 'rule_48h_token_preflight',
                     'name'    => '48-Stunden-Vorab-Check der Kanalverbindungen',
-                    'detail'  => 'Prüft 48 Stunden vor geplanten Beiträgen alle OAuth-Zugänge und verlängert Refresh-Tokens automatisch.',
+                    'detail'  => 'Prüft 48 Stunden vor geplanten Beiträgen, ob alle Kanal-Zugänge gültig sind.',
                     'enabled' => true,
                 ],
                 [
                     'id'      => 'rule_retry_transient_errors',
-                    'name'    => 'Automatische Wiederholung bei Plattform-Überlastung (Max. 3× mit Backoff)',
-                    'detail'  => 'Wiederholt nur vorübergehende Fehler (HTTP 429 / 5xx). Stoppt sofort bei abgelaufenen Zugängen (401/403).',
+                    'name'    => 'Automatische Wiederholung bei kurzer Plattform-Störung (Max. 3×)',
+                    'detail'  => 'Wiederholt nur vorübergehende Fehler (HTTP 429 / 5xx). Stoppt sofort bei Zugangsproblemen.',
                     'enabled' => true,
                 ],
                 [
                     'id'      => 'rule_manual_handoff_reminder',
-                    'name'    => 'Erinnerung für manuelle Kanäle (WhatsApp / Signal / App-Abschluss)',
-                    'detail'  => 'Erzeugt bei Fälligkeit einen direkten Hinweis mit Link zum mobilen Handoff-Assistenten (S10).',
+                    'name'    => 'Erinnerung für manuelle Kanäle (z. B. WhatsApp-Kanal)',
+                    'detail'  => 'Zeigt fällige manuelle Beiträge direkt unter „Manuelle Übergaben“ hervorgehoben an.',
                     'enabled' => true,
                 ],
             ],
             'audit_events' => [
                 [
-                    'id'            => 'aud_init',
-                    'brand_id'      => 'jan',
+                    'id'            => 'aud_init_v2',
+                    'brand_id'      => 'default',
                     'post_group_id' => null,
                     'account_id'    => null,
                     'event_type'    => 'system.initialized',
-                    'title'         => 'Social Media Hub v1.0 initialisiert',
-                    'detail'        => 'Eigenständige Datenbank- und Provider-Architektur aktiv.',
+                    'title'         => 'Social Media Hub v2.0 sauber eingerichtet',
+                    'detail'        => 'Bereit für deine ersten Kanäle und Beiträge.',
                     'actor_id'      => 1,
                     'created_at'    => $now,
                 ],
             ],
         ];
     }
+
+    /**
+     * Erkennt den unveränderten v1.0-Demo-Seedbestand anhand seiner festen Demo-IDs.
+     *
+     * @param array<string, mixed> $saved
+     */
+    private function isLegacyV1DemoState(array $saved): bool
+    {
+        $postIds = array_map(static fn(array $p): string => (string) ($p['id'] ?? ''), (array) ($saved['post_groups'] ?? []));
+        $legacyDemoIds = ['pg_classic_1', 'pg_youtube_hint', 'pg_nui_hello'];
+        $onlyLegacyPosts = $postIds !== [] && array_diff($postIds, $legacyDemoIds) === [];
+        $hasLegacyBrand = false;
+        foreach ((array) ($saved['brands'] ?? []) as $b) {
+            if (($b['id'] ?? '') === 'demo_client') {
+                $hasLegacyBrand = true;
+                break;
+            }
+        }
+        return $onlyLegacyPosts || ($hasLegacyBrand && $postIds === []);
+    }
+
+    /**
+     * @param array<string, mixed> $saved
+     * @return array<string, mixed>
+     */
+    private function ensureStateShape(array $saved): array
+    {
+        $defaults = $this->createEmptyWorkspaceState();
+        foreach (['brands', 'accounts', 'media_assets', 'snippets', 'post_groups', 'revisions', 'jobs', 'receipts', 'interactions', 'automation_rules', 'audit_events'] as $key) {
+            if (!isset($saved[$key]) || !is_array($saved[$key])) {
+                $saved[$key] = $defaults[$key];
+            }
+        }
+        if ($saved['brands'] === []) {
+            $saved['brands'] = $defaults['brands'];
+        }
+        $saved['schema_version'] = 2;
+        return $saved;
+    }
+
+    // -------------------------------------------------------------------------
+    // Marken (Brands)
+    // -------------------------------------------------------------------------
 
     /**
      * @return list<array<string, mixed>>
@@ -637,6 +226,84 @@ class Repositories
         }
         return null;
     }
+
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    public function saveBrand(array $input): array
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $id = trim((string) ($input['id'] ?? ''));
+        if ($id === '') {
+            $id = 'brand_' . bin2hex(random_bytes(4));
+        }
+
+        $name = trim((string) ($input['name'] ?? 'Neue Marke'));
+        $slug = trim((string) ($input['slug'] ?? ''));
+        if ($slug === '') {
+            $slug = strtolower((string) preg_replace('/[^a-z0-9]+/i', '-', $name));
+            $slug = trim($slug, '-') ?: $id;
+        }
+
+        $record = [
+            'id'               => $id,
+            'slug'             => $slug,
+            'name'             => $name !== '' ? $name : 'Unbenannte Marke',
+            'color'            => preg_match('/^#[0-9a-fA-F]{6}$/', (string) ($input['color'] ?? '')) ? (string) $input['color'] : '#586EE7',
+            'description'      => trim((string) ($input['description'] ?? '')),
+            'require_approval' => !empty($input['require_approval']),
+            'allowed_user_ids' => array_values(array_map('intval', (array) ($input['allowed_user_ids'] ?? []))),
+            'default_utm'      => is_array($input['default_utm'] ?? null) ? $input['default_utm'] : ['utm_source' => '{platform}', 'utm_medium' => 'social'],
+            'updated_at'       => $now,
+        ];
+
+        foreach ($this->state['brands'] as $idx => $existing) {
+            if (($existing['id'] ?? '') === $id) {
+                $record['created_at'] = $existing['created_at'] ?? $now;
+                $this->state['brands'][$idx] = $record;
+                $this->persist();
+                return $record;
+            }
+        }
+
+        $record['created_at'] = $now;
+        $this->state['brands'][] = $record;
+        $this->persist();
+        return $record;
+    }
+
+    public function deleteBrand(string $brandId): bool
+    {
+        if (count($this->state['brands']) <= 1) {
+            return false;
+        }
+        $before = count($this->state['brands']);
+        $this->state['brands'] = array_values(array_filter(
+            $this->state['brands'],
+            static fn(array $b): bool => ($b['id'] ?? '') !== $brandId
+        ));
+        if (count($this->state['brands']) === $before) {
+            return false;
+        }
+        $fallbackBrandId = (string) ($this->state['brands'][0]['id'] ?? 'default');
+        foreach ($this->state['accounts'] as $idx => $acc) {
+            if (($acc['brand_id'] ?? '') === $brandId) {
+                $this->state['accounts'][$idx]['brand_id'] = $fallbackBrandId;
+            }
+        }
+        foreach ($this->state['post_groups'] as $idx => $pg) {
+            if (($pg['brand_id'] ?? '') === $brandId) {
+                $this->state['post_groups'][$idx]['brand_id'] = $fallbackBrandId;
+            }
+        }
+        $this->persist();
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Kanäle & Konten (Accounts)
+    // -------------------------------------------------------------------------
 
     /**
      * @return list<array<string, mixed>>
@@ -667,6 +334,131 @@ class Repositories
     }
 
     /**
+     * Legt ein neues Konto an oder aktualisiert ein bestehendes.
+     * Übergebene Klartext-Zugangsdaten (`access_token`, `refresh_token`, `bot_token`, `instance_url`, `chat_id`)
+     * werden unmittelbar über `TokenSafe` verschlüsselt und niemals im Klartext gespeichert.
+     *
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    public function saveAccount(array $input): array
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $id = trim((string) ($input['id'] ?? ''));
+        $existing = $id !== '' ? $this->findAccount($id) : null;
+        if ($id === '') {
+            $id = 'acc_' . bin2hex(random_bytes(5));
+        }
+
+        $platform = strtolower(trim((string) ($input['platform'] ?? ($existing['platform'] ?? 'instagram'))));
+        $isManualPlatform = in_array($platform, ['whatsapp', 'signal'], true);
+
+        $defaultAccountType = match ($platform) {
+            'instagram', 'pinterest' => 'business',
+            'facebook'               => 'page',
+            'linkedin'               => 'person',
+            'threads'                => 'profile',
+            'tiktok'                 => 'creator',
+            'bluesky'                => 'atproto',
+            'mastodon'               => 'instance',
+            'telegram', 'whatsapp'   => 'channel',
+            default                  => 'group',
+        };
+
+        $accountType = trim((string) ($input['account_type'] ?? ($existing['account_type'] ?? $defaultAccountType)));
+        $defaultBrandId = (string) ($this->state['brands'][0]['id'] ?? 'default');
+        $brandId = trim((string) ($input['brand_id'] ?? ($existing['brand_id'] ?? $defaultBrandId)));
+        if ($this->findBrand($brandId) === null) {
+            $brandId = $defaultBrandId;
+        }
+
+        // Bestehende Geheimnisse laden und mit neu eingegebenen aktualisieren
+        $existingEncrypted = (string) ($existing['encrypted_secrets'] ?? '');
+        $secrets = $existingEncrypted !== '' ? $this->tokenSafe->decryptSecrets($existingEncrypted) : [];
+
+        $newToken = trim((string) ($input['access_token'] ?? ''));
+        $newRefresh = trim((string) ($input['refresh_token'] ?? ''));
+        $newIdentifier = trim((string) ($input['external_account_id'] ?? ($existing['external_account_id'] ?? '')));
+        $instanceUrl = trim((string) ($input['instance_url'] ?? ($existing['instance_url'] ?? '')));
+
+        if ($newToken !== '') {
+            $secrets['access_token'] = $newToken;
+        }
+        if ($newRefresh !== '') {
+            $secrets['refresh_token'] = $newRefresh;
+        }
+        if ($instanceUrl !== '') {
+            $secrets['instance_url'] = $instanceUrl;
+        }
+
+        $encryptedSecrets = $secrets !== [] ? $this->tokenSafe->encryptSecrets($secrets) : '';
+
+        // Realistischer Verbindungsstatus: manuell für WhatsApp/Signal, verbunden wenn Token hinterlegt, sonst unverified
+        $requestedState = trim((string) ($input['connection_state'] ?? ''));
+        if ($isManualPlatform || $requestedState === 'manual') {
+            $connectionState = 'manual';
+            $authMode = 'manual_handoff';
+        } elseif ($requestedState !== '') {
+            $connectionState = $requestedState;
+            $authMode = (string) ($input['auth_mode'] ?? ($existing['auth_mode'] ?? 'direct_credentials'));
+        } elseif (!empty($secrets['access_token'])) {
+            $connectionState = $platform === 'tiktok' ? 'handoff_only' : 'connected';
+            $authMode = (string) ($input['auth_mode'] ?? 'direct_credentials');
+        } else {
+            $connectionState = (string) ($existing['connection_state'] ?? 'unverified');
+            $authMode = (string) ($input['auth_mode'] ?? 'direct_credentials');
+        }
+
+        $defaultScopes = match ($platform) {
+            'instagram' => ['instagram_basic', 'instagram_content_publish'],
+            'facebook'  => ['pages_manage_posts'],
+            'linkedin'  => $accountType === 'organization' ? ['w_organization_social'] : ['w_member_social'],
+            'threads'   => ['threads_basic', 'threads_content_publish'],
+            'tiktok'    => ['video.upload'],
+            'pinterest' => ['boards:read', 'pins:write'],
+            'bluesky'   => ['com.atproto.repo.createRecord'],
+            'mastodon'  => ['write:statuses', 'write:media'],
+            default     => [],
+        };
+
+        $grantedScopes = isset($input['granted_scopes']) && is_array($input['granted_scopes'])
+            ? array_values(array_map('strval', $input['granted_scopes']))
+            : (!empty($secrets['access_token']) ? $defaultScopes : (array) ($existing['granted_scopes'] ?? []));
+
+        $record = [
+            'id'                  => $id,
+            'brand_id'            => $brandId,
+            'platform'            => $platform,
+            'account_type'        => $accountType,
+            'handle'              => trim((string) ($input['handle'] ?? ($existing['handle'] ?? 'Neuer Kanal'))),
+            'external_account_id' => $newIdentifier,
+            'instance_url'        => $instanceUrl,
+            'auth_mode'           => $authMode,
+            'connection_state'    => $connectionState,
+            'granted_scopes'      => $grantedScopes,
+            'instance_limits'     => $input['instance_limits'] ?? ($existing['instance_limits'] ?? null),
+            'encrypted_secrets'   => $encryptedSecrets,
+            'token_expires_at'    => $input['token_expires_at'] ?? ($existing['token_expires_at'] ?? null),
+            'last_checked_at'     => $now,
+            'updated_at'          => $now,
+        ];
+
+        foreach ($this->state['accounts'] as $idx => $item) {
+            if (($item['id'] ?? '') === $id) {
+                $record['created_at'] = $item['created_at'] ?? $now;
+                $this->state['accounts'][$idx] = $record;
+                $this->persist();
+                return $record;
+            }
+        }
+
+        $record['created_at'] = $now;
+        $this->state['accounts'][] = $record;
+        $this->persist();
+        return $record;
+    }
+
+    /**
      * @param array<string, mixed> $updates
      */
     public function updateAccount(string $accountId, array $updates): ?array
@@ -682,6 +474,35 @@ class Repositories
         }
         return null;
     }
+
+    public function deleteAccount(string $accountId): bool
+    {
+        $before = count($this->state['accounts']);
+        $this->state['accounts'] = array_values(array_filter(
+            $this->state['accounts'],
+            static fn(array $a): bool => ($a['id'] ?? '') !== $accountId
+        ));
+        if (count($this->state['accounts']) === $before) {
+            return false;
+        }
+        // Aus Ziel-Listen offener Beiträge entfernen
+        foreach ($this->state['post_groups'] as $idx => $pg) {
+            $targets = array_values(array_filter(
+                (array) ($pg['targets'] ?? []),
+                static fn($tid): bool => (string) $tid !== $accountId
+            ));
+            $this->state['post_groups'][$idx]['targets'] = $targets;
+            if (isset($this->state['post_groups'][$idx]['variants'][$accountId])) {
+                unset($this->state['post_groups'][$idx]['variants'][$accountId]);
+            }
+        }
+        $this->persist();
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Medienbibliothek (Media Assets)
+    // -------------------------------------------------------------------------
 
     /**
      * @return list<array<string, mixed>>
@@ -712,6 +533,88 @@ class Repositories
     }
 
     /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    public function saveMediaAsset(array $input): array
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $id = trim((string) ($input['id'] ?? ''));
+        if ($id === '') {
+            $id = 'med_' . bin2hex(random_bytes(5));
+        }
+
+        $defaultBrandId = (string) ($this->state['brands'][0]['id'] ?? 'default');
+        $mime = trim((string) ($input['mime_type'] ?? 'image/jpeg'));
+        $kind = trim((string) ($input['kind'] ?? ''));
+        if ($kind === '') {
+            $kind = str_starts_with($mime, 'video/')
+                ? 'video'
+                : ($mime === 'application/pdf' ? 'document' : 'image');
+        }
+
+        $record = [
+            'id'               => $id,
+            'brand_id'         => trim((string) ($input['brand_id'] ?? $defaultBrandId)) ?: $defaultBrandId,
+            'wp_attachment_id' => isset($input['wp_attachment_id']) ? (int) $input['wp_attachment_id'] : null,
+            'url'              => trim((string) ($input['url'] ?? '')),
+            'thumbnail_url'    => trim((string) ($input['thumbnail_url'] ?? ($input['url'] ?? ''))),
+            'name'             => trim((string) ($input['name'] ?? 'Medium')),
+            'kind'             => $kind,
+            'mime_type'        => $mime,
+            'width_px'         => (int) ($input['width_px'] ?? 1080),
+            'height_px'        => (int) ($input['height_px'] ?? 1080),
+            'duration_sec'     => (int) ($input['duration_sec'] ?? 0),
+            'alt_text'         => trim((string) ($input['alt_text'] ?? '')),
+            'copyright_notice' => trim((string) ($input['copyright_notice'] ?? '')),
+            'renditions'       => is_array($input['renditions'] ?? null) ? $input['renditions'] : [
+                '4:5'  => ['width' => 1080, 'height' => 1350, 'ready' => true],
+                '1:1'  => ['width' => 1080, 'height' => 1080, 'ready' => true],
+                '9:16' => ['width' => 1080, 'height' => 1920, 'ready' => true],
+                '2:3'  => ['width' => 1000, 'height' => 1500, 'ready' => true],
+                '16:9' => ['width' => 1920, 'height' => 1080, 'ready' => true],
+            ],
+            'updated_at'       => $now,
+        ];
+
+        foreach ($this->state['media_assets'] as $idx => $existing) {
+            if (($existing['id'] ?? '') === $id) {
+                $record['created_at'] = $existing['created_at'] ?? $now;
+                $this->state['media_assets'][$idx] = $record;
+                $this->persist();
+                return $record;
+            }
+        }
+
+        $record['created_at'] = $now;
+        array_unshift($this->state['media_assets'], $record);
+        $this->persist();
+        return $record;
+    }
+
+    /**
+     * @param list<string> $mediaIds
+     */
+    public function deleteMediaAssets(array $mediaIds): int
+    {
+        $ids = array_values(array_unique(array_map('strval', $mediaIds)));
+        $before = count($this->state['media_assets']);
+        $this->state['media_assets'] = array_values(array_filter(
+            $this->state['media_assets'],
+            static fn(array $m): bool => !in_array((string) ($m['id'] ?? ''), $ids, true)
+        ));
+        $deleted = $before - count($this->state['media_assets']);
+        if ($deleted > 0) {
+            $this->persist();
+        }
+        return $deleted;
+    }
+
+    // -------------------------------------------------------------------------
+    // Textbausteine & Hashtag-Pakete (Snippets)
+    // -------------------------------------------------------------------------
+
+    /**
      * @return list<array<string, mixed>>
      */
     public function getSnippets(?string $brandId = null): array
@@ -725,6 +628,63 @@ class Repositories
         }
         return $snippets;
     }
+
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    public function saveSnippet(array $input): array
+    {
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $id = trim((string) ($input['id'] ?? ''));
+        if ($id === '') {
+            $id = 'snip_' . bin2hex(random_bytes(4));
+        }
+        $defaultBrandId = (string) ($this->state['brands'][0]['id'] ?? 'default');
+
+        $record = [
+            'id'           => $id,
+            'brand_id'     => trim((string) ($input['brand_id'] ?? $defaultBrandId)) ?: $defaultBrandId,
+            'title'        => trim((string) ($input['title'] ?? 'Textbaustein')),
+            'snippet_type' => in_array((string) ($input['snippet_type'] ?? 'hashtags'), ['hashtags', 'cta', 'text'], true)
+                ? (string) $input['snippet_type']
+                : 'hashtags',
+            'content'      => trim((string) ($input['content'] ?? '')),
+            'updated_at'   => $now,
+        ];
+
+        foreach ($this->state['snippets'] as $idx => $existing) {
+            if (($existing['id'] ?? '') === $id) {
+                $record['created_at'] = $existing['created_at'] ?? $now;
+                $this->state['snippets'][$idx] = $record;
+                $this->persist();
+                return $record;
+            }
+        }
+
+        $record['created_at'] = $now;
+        array_unshift($this->state['snippets'], $record);
+        $this->persist();
+        return $record;
+    }
+
+    public function deleteSnippet(string $snippetId): bool
+    {
+        $before = count($this->state['snippets']);
+        $this->state['snippets'] = array_values(array_filter(
+            $this->state['snippets'],
+            static fn(array $s): bool => ($s['id'] ?? '') !== $snippetId
+        ));
+        if (count($this->state['snippets']) < $before) {
+            $this->persist();
+            return true;
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Beitragsverbünde (PostGroups) – inkl. Bulk Move, Duplicate & Delete
+    // -------------------------------------------------------------------------
 
     /**
      * @return list<array<string, mixed>>
@@ -761,14 +721,33 @@ class Repositories
     public function savePostGroup(array $postGroup): array
     {
         $now = gmdate('Y-m-d\TH:i:s\Z');
+        $defaultBrandId = (string) ($this->state['brands'][0]['id'] ?? 'default');
+
         if (empty($postGroup['id'])) {
             $postGroup['id'] = 'pg_' . bin2hex(random_bytes(5));
             $postGroup['created_at'] = $now;
+        }
+        if (empty($postGroup['brand_id'])) {
+            $postGroup['brand_id'] = $defaultBrandId;
+        }
+        if (trim((string) ($postGroup['title'] ?? '')) === '') {
+            $firstLine = strtok(trim((string) ($postGroup['master_text'] ?? '')), "\r\n") ?: 'Neuer Beitrag';
+            $postGroup['title'] = mb_substr($firstLine, 0, 72);
+        }
+        if (!isset($postGroup['archived'])) {
+            $postGroup['archived'] = false;
+        }
+        if (!isset($postGroup['campaign'])) {
+            $postGroup['campaign'] = 'Allgemein';
+        }
+        if (!isset($postGroup['timezone'])) {
+            $postGroup['timezone'] = 'Europe/Berlin';
         }
         $postGroup['updated_at'] = $now;
 
         foreach ($this->state['post_groups'] as $idx => $existing) {
             if (($existing['id'] ?? '') === $postGroup['id']) {
+                $postGroup['created_at'] = $existing['created_at'] ?? $now;
                 $this->state['post_groups'][$idx] = $postGroup;
                 $this->persist();
                 return $postGroup;
@@ -779,6 +758,149 @@ class Repositories
         $this->persist();
         return $postGroup;
     }
+
+    /**
+     * Verschiebt einen oder mehrere Beiträge (Ordner/Kampagne, Status/Archiv, Termin oder Marke).
+     *
+     * @param list<string>         $postGroupIds
+     * @param array<string, mixed> $moveSpec
+     */
+    public function bulkMovePostGroups(array $postGroupIds, array $moveSpec): int
+    {
+        $ids = array_values(array_unique(array_map('strval', $postGroupIds)));
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $movedCount = 0;
+
+        foreach ($this->state['post_groups'] as $idx => $group) {
+            if (!in_array((string) ($group['id'] ?? ''), $ids, true)) {
+                continue;
+            }
+            if (isset($moveSpec['campaign']) && trim((string) $moveSpec['campaign']) !== '') {
+                $this->state['post_groups'][$idx]['campaign'] = trim((string) $moveSpec['campaign']);
+            }
+            if (isset($moveSpec['brand_id']) && trim((string) $moveSpec['brand_id']) !== '' && $this->findBrand((string) $moveSpec['brand_id']) !== null) {
+                $this->state['post_groups'][$idx]['brand_id'] = trim((string) $moveSpec['brand_id']);
+            }
+            if (array_key_exists('scheduled_at', $moveSpec) && $moveSpec['scheduled_at'] !== '__keep__') {
+                $this->state['post_groups'][$idx]['scheduled_at'] = $moveSpec['scheduled_at'] ? (string) $moveSpec['scheduled_at'] : null;
+            }
+            if (isset($moveSpec['workflow_target']) && $moveSpec['workflow_target'] !== '__keep__') {
+                $target = (string) $moveSpec['workflow_target'];
+                if ($target === 'archived') {
+                    $this->state['post_groups'][$idx]['archived'] = true;
+                } elseif ($target === 'draft') {
+                    $this->state['post_groups'][$idx]['archived'] = false;
+                    $this->state['post_groups'][$idx]['approval_status'] = 'none';
+                } elseif ($target === 'review') {
+                    $this->state['post_groups'][$idx]['archived'] = false;
+                    $this->state['post_groups'][$idx]['approval_status'] = 'pending';
+                } elseif ($target === 'approved') {
+                    $this->state['post_groups'][$idx]['archived'] = false;
+                    $this->state['post_groups'][$idx]['approval_status'] = 'approved';
+                }
+            }
+            $this->state['post_groups'][$idx]['updated_at'] = $now;
+            $movedCount++;
+        }
+
+        if ($movedCount > 0) {
+            $this->persist();
+            $this->recordAudit(
+                'post_groups.bulk_moved',
+                sprintf('%d Beitrag/Beiträge verschoben', $movedCount),
+                json_encode($moveSpec, JSON_UNESCAPED_UNICODE) ?: ''
+            );
+        }
+
+        return $movedCount;
+    }
+
+    /**
+     * Dupliziert einen oder mehrere Beiträge als saubere neue Entwürfe (ohne alte Versandstatus).
+     *
+     * @param list<string> $postGroupIds
+     * @return list<array<string, mixed>>
+     */
+    public function duplicatePostGroups(array $postGroupIds): array
+    {
+        $ids = array_values(array_unique(array_map('strval', $postGroupIds)));
+        $created = [];
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+
+        foreach ($ids as $id) {
+            $orig = $this->findPostGroup($id);
+            if ($orig === null) {
+                continue;
+            }
+            $copy = json_decode(json_encode($orig) ?: '{}', true);
+            $copy['id'] = 'pg_' . bin2hex(random_bytes(5));
+            $copy['title'] = (string) ($orig['title'] ?? 'Beitrag') . ' (Kopie)';
+            $copy['approval_status'] = 'none';
+            $copy['approved_by'] = null;
+            $copy['approved_at'] = null;
+            $copy['archived'] = false;
+            $copy['scheduled_at'] = null;
+            $copy['current_revision_id'] = null;
+            $copy['created_at'] = $now;
+            $copy['updated_at'] = $now;
+
+            foreach ((array) ($copy['variants'] ?? []) as $accId => $v) {
+                $copy['variants'][$accId]['delivery_status'] = 'pending';
+                $copy['variants'][$accId]['remote_post_id'] = null;
+                $copy['variants'][$accId]['remote_url'] = null;
+                $copy['variants'][$accId]['completed_at'] = null;
+                $copy['variants'][$accId]['last_error'] = null;
+            }
+
+            array_unshift($this->state['post_groups'], $copy);
+            $created[] = $copy;
+        }
+
+        if ($created !== []) {
+            $this->persist();
+            $this->recordAudit(
+                'post_groups.duplicated',
+                sprintf('%d Beitrag/Beiträge dupliziert', count($created))
+            );
+        }
+
+        return $created;
+    }
+
+    /**
+     * Löscht einen oder mehrere Beiträge endgültig samt zugehöriger Jobs.
+     *
+     * @param list<string> $postGroupIds
+     */
+    public function deletePostGroups(array $postGroupIds): int
+    {
+        $ids = array_values(array_unique(array_map('strval', $postGroupIds)));
+        $before = count($this->state['post_groups']);
+        $this->state['post_groups'] = array_values(array_filter(
+            $this->state['post_groups'],
+            static fn(array $g): bool => !in_array((string) ($g['id'] ?? ''), $ids, true)
+        ));
+        $deleted = $before - count($this->state['post_groups']);
+
+        if ($deleted > 0) {
+            $this->state['jobs'] = array_values(array_filter(
+                $this->state['jobs'] ?? [],
+                static fn(array $j): bool => !in_array((string) ($j['post_group_id'] ?? ''), $ids, true)
+            ));
+            $this->persist();
+            $this->recordAudit(
+                'post_groups.deleted',
+                sprintf('%d Beitrag/Beiträge endgültig gelöscht', $deleted),
+                implode(', ', $ids)
+            );
+        }
+
+        return $deleted;
+    }
+
+    // -------------------------------------------------------------------------
+    // Revisionen, Jobs, Nachweise, Automationen & Audit
+    // -------------------------------------------------------------------------
 
     /**
      * @param array<string, mixed> $revision
@@ -894,6 +1016,26 @@ class Repositories
         array_unshift($this->state['receipts'], $receipt);
         $this->persist();
         return $receipt;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function getAutomationRules(): array
+    {
+        return array_values($this->state['automation_rules'] ?? []);
+    }
+
+    public function toggleAutomationRule(string $ruleId, bool $enabled): array
+    {
+        foreach ($this->state['automation_rules'] as $idx => $rule) {
+            if (($rule['id'] ?? '') === $ruleId) {
+                $this->state['automation_rules'][$idx]['enabled'] = $enabled;
+                $this->persist();
+                break;
+            }
+        }
+        return $this->getAutomationRules();
     }
 
     public function recordAudit(
