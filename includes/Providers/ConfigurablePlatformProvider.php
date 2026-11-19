@@ -2,6 +2,10 @@
 /**
  * Konfigurierbares Plattform-Steckmodul (`ConfigurablePlatformProvider`).
  *
+ * Implementiert die vollständige Capability-Diagnose, die format- und kontospezifische
+ * Vorprüfung (Preflight), die Link-/YouTube-Verweis-Logik sowie die Zustellschritte
+ * inklusive signierter Pull-URLs für Meta/Instagram.
+ *
  * @package SocialMediaHub\Providers
  */
 
@@ -46,6 +50,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
         $grantedScopes = array_values(array_map('strval', (array) ($account['granted_scopes'] ?? [])));
         $expiresAt = isset($account['token_expires_at']) ? (string) $account['token_expires_at'] : '';
 
+        // 1. Rein manuelle Kanäle (WhatsApp-Kanal, Signal oder manuell konfiguriertes Telegram)
         if (in_array($this->platformKey, ['whatsapp', 'signal'], true) || $connectionState === 'manual') {
             return [
                 'status'         => 'manual',
@@ -57,6 +62,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             ];
         }
 
+        // 2. Noch nicht geprüfte Verbindungen (z. B. neue Mastodon-Instanz)
         if ($connectionState === 'unverified' || $connectionState === 'unknown') {
             return [
                 'status'         => 'unknown',
@@ -68,9 +74,11 @@ class ConfigurablePlatformProvider implements ProviderInterface
             ];
         }
 
+        // 3. Abgelaufenes OAuth-Token prüfen
         $tokenExpired = ($connectionState === 'expired')
             || ($expiresAt !== '' && strtotime($expiresAt) !== false && strtotime($expiresAt) <= time());
 
+        // 4. Erforderliche Scopes für diesen Kontotyp prüfen (z. B. w_organization_social bei LinkedIn Company)
         $requiredByType = (array) ($this->spec['required_scopes'][$accountType] ?? []);
         $missingScopes = array_values(array_diff($requiredByType, $grantedScopes));
 
@@ -95,6 +103,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             ];
         }
 
+        // 5. App-Fertigstellung (Handoff), z. B. TikTok Upload ohne Direct-Post-Audit
         if ($connectionState === 'handoff_only' || ($this->platformKey === 'tiktok' && !in_array('video.publish', $grantedScopes, true))) {
             return [
                 'status'         => 'handoff',
@@ -128,6 +137,8 @@ class ConfigurablePlatformProvider implements ProviderInterface
         $effectiveText = $overrideText !== '' ? $overrideText : $masterText;
         $externalUrl = trim((string) ($variant['metadata']['link'] ?? ($postGroup['external_url'] ?? '')));
 
+        // Bei Kanälen mit klickbaren Links im Text (z. B. WhatsApp, LinkedIn, Bluesky, Mastodon)
+        // wird ein hinterlegter externer Link (etwa ein YouTube-Video-Link) automatisch berücksichtigt.
         if (
             $externalUrl !== ''
             && !empty($this->spec['clickable_in_caption'])
@@ -165,6 +176,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             'max_media'  => 4,
         ]);
 
+        // 1. Medien-Prüfung pro gewähltem Format
         $requiredKind = (string) ($formatSpec['media_kind'] ?? 'none');
         $minMedia = (int) ($formatSpec['min_media'] ?? 0);
         $maxMedia = (int) ($formatSpec['max_media'] ?? 10);
@@ -211,12 +223,14 @@ class ConfigurablePlatformProvider implements ProviderInterface
             $advice[] = 'Ausgewählte Medien werden bei diesem reinen Text-/Umfrageformat nicht mitgesendet.';
         }
 
+        // Barrierefreiheit (Alt-Text-Prüfung für Bilder)
         foreach ($matchingMedia as $mediaItem) {
             if (($mediaItem['kind'] ?? '') === 'image' && trim((string) ($mediaItem['alt_text'] ?? '')) === '') {
                 $advice[] = sprintf('Für „%s“ fehlt noch ein Alt-Text (Barrierefreiheit).', (string) ($mediaItem['name'] ?? 'Bild'));
             }
         }
 
+        // 2. Text- und Zeichenlimit-Prüfung
         if ($effectiveText === '' && $this->platformKey !== 'pinterest') {
             $issues[] = 'Beitragstext (Caption) fehlt.';
         }
@@ -229,6 +243,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             );
         }
 
+        // 3. Clevere Link- & YouTube-Verweis-Prüfung (Instagram klickbare Links vs. Bio-Hinweis)
         $hasLinkInText = (bool) preg_match('~https?://\S+~i', $effectiveText);
         if ($this->platformKey === 'instagram' && ($externalUrl !== '' || $hasLinkInText) && $formatKey !== 'story') {
             if (empty($variant['metadata']['bio_link_hint']) && !str_contains(mb_strtolower($effectiveText), 'bio')) {
@@ -236,6 +251,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             }
         }
 
+        // 4. Plattformspezifische Pflichtfelder (Pinterest, TikTok, Facebook Link, LinkedIn, Mastodon, IG Story)
         $meta = (array) ($variant['metadata'] ?? []);
 
         if ($this->platformKey === 'pinterest') {
@@ -264,9 +280,11 @@ class ConfigurablePlatformProvider implements ProviderInterface
             $advice[] = sprintf('Instanz-Limit aktiv: max. %d Zeichen.', $charLimit ?? 500);
         }
 
+        // 5. Konto-Capabilities & Berechtigungen auswerten
         $cap = $this->evaluateAccountCapabilities($account);
         $method = $cap['delivery_mode'];
 
+        // Instagram Story mit nativen Stickern wird automatisch zur manuellen App-Nachbearbeitung
         if ($this->platformKey === 'instagram' && $formatKey === 'story' && !empty($meta['native_extras'])) {
             $method = 'manual';
             $advice[] = 'Story mit nativen Stickern/Musik ist als manuelle Übergabe eingeplant.';
@@ -358,7 +376,8 @@ class ConfigurablePlatformProvider implements ProviderInterface
             ];
         }
 
-        if (!empty($snapshotVariant['metadata']['simulate_rate_limit']) && ((int) ($job['attempt_count'] ?? 0)) < 1) {
+        // Simulierter transienter Rate-Limit-Fehler (HTTP 429) für automatisierte Backoff-Tests
+        if (!empty($snapshotVariant['metadata']['simulate_rate_limit']) && ((int) ($job['attempt_count'] ?? 0)) <= 1) {
             return [
                 'outcome'       => 'failed_retryable',
                 'http_code'     => 429,
@@ -368,6 +387,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             ];
         }
 
+        // Für Pull-APIs (Instagram/Threads) wird eine kurzlebige, HMAC-signierte Medien-Abhol-URL erzeugt
         $mediaIds = (array) ($snapshotVariant['media_ids'] ?? []);
         $renditionKey = (string) ($snapshotVariant['rendition_key'] ?? '4:5');
         $signedPullUrl = null;

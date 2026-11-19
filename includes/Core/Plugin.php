@@ -99,6 +99,7 @@ class Plugin
         //    oder beim kryptografisch HMAC-signierten Medien-Abruf durch Instagram/Meta unter `/media-pull`)
         //    wird die REST-Sperre von `JDB_Wartungsmodus` gezielt nur für diesen Request freigegeben.
         if (function_exists('add_filter')) {
+            add_filter('admin_body_class', [$this->adminPage, 'filterAdminBodyClass']);
             add_filter('rest_pre_dispatch', [$this, 'ensureWartungsmodusRestCompatibility'], 10, 3);
         }
     }

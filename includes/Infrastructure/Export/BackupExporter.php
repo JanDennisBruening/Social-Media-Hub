@@ -2,6 +2,13 @@
 /**
  * Komplett-Export & Umzugs-Paket (`BackupExporter`).
  *
+ * Bereich 1 (Komplett-Export & Auslagern):
+ * Exportiert alle Marken, Kanalkonfigurationen (stets OHNE geheime OAuth-Tokens!),
+ * Medien-Manifeste (inkl. Format-Renditions, Alt-Texten & Dateipfaden), Textbausteine/Hashtag-Sets,
+ * Beitragsverbünde, Zielvarianten, unveränderliche Revisions-Snapshots, Queue-Jobs,
+ * manuelle Nachweise und das Audit-Protokoll in ein portables, menschen- und maschinenlesbares
+ * Paket – inklusive CSV-Archivliste für Tabellenkalkulationen und validiertem Re-Import.
+ *
  * @package SocialMediaHub\Infrastructure\Export
  */
 
@@ -26,6 +33,9 @@ class BackupExporter
 
     /**
      * Erzeugt ein vollständiges, portables Umzugs- und Backup-Paket als Array (JSON-serialisierbar).
+     *
+     * Sicherheitsgarantie: Alle `encrypted_secrets` werden entfernt und durch einen harmlosen
+     * `token_hint` ersetzt, damit das Backup niemals fremden Zugriff auf Social-Media-Konten gewährt.
      *
      * @return array<string, mixed>
      */
@@ -68,7 +78,7 @@ class BackupExporter
 
         return [
             'export_format'   => 'social-media-hub-portable-backup',
-            'export_version'  => '1.0.0',
+            'export_version'  => '2.0.0',
             'exported_at'     => gmdate('Y-m-d\TH:i:s\Z'),
             'secrets_included'=> false,
             'brand_filter'    => $brandFilter ?? 'all',
@@ -97,7 +107,7 @@ class BackupExporter
     }
 
     /**
-     * Erzeugt einen übersichtlichen CSV-Export aller Beiträge und Kanal-Ausspielungen.
+     * Erzeugt einen übersichtlichen CSV-Export aller Beiträge und Kanal-Ausspielungen (für Excel / Google Sheets / Archiv).
      */
     public function createCsvArchiveReport(?string $brandFilter = null): string
     {
@@ -119,7 +129,29 @@ class BackupExporter
         foreach ($this->repositories->getPostGroups($brandFilter) as $group) {
             $brand = $this->repositories->findBrand((string) ($group['brand_id'] ?? ''));
             $brandName = (string) ($brand['name'] ?? $group['brand_id'] ?? '');
-            foreach ((array) ($group['targets'] ?? []) as $accountId) {
+            $targets = (array) ($group['targets'] ?? []);
+            if ($targets === []) {
+                $row = [
+                    (string) ($group['id'] ?? ''),
+                    $brandName,
+                    (string) ($group['campaign'] ?? ''),
+                    (string) ($group['title'] ?? ''),
+                    (string) ($group['scheduled_at'] ?? ''),
+                    (string) ($group['approval_status'] ?? ''),
+                    'Noch kein Kanal',
+                    '-',
+                    '-',
+                    !empty($group['archived']) ? 'archived' : 'draft',
+                    (string) ($group['external_url'] ?? ''),
+                ];
+                $escaped = array_map(
+                    static fn(string $val): string => '"' . str_replace('"', '""', str_replace(["\r", "\n"], ' ', $val)) . '"',
+                    $row
+                );
+                $lines[] = implode(';', $escaped);
+                continue;
+            }
+            foreach ($targets as $accountId) {
                 $account = $this->repositories->findAccount((string) $accountId);
                 $variant = (array) ($group['variants'][$accountId] ?? []);
                 $row = [
