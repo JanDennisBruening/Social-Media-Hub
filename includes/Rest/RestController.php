@@ -17,6 +17,7 @@ use SocialMediaHub\Domain\PreflightService;
 use SocialMediaHub\Domain\PublicationService;
 use SocialMediaHub\Infrastructure\Database\Repositories;
 use SocialMediaHub\Infrastructure\Export\BackupExporter;
+use SocialMediaHub\Infrastructure\Http\LiveApiClient;
 use SocialMediaHub\Infrastructure\Security\Capabilities;
 use SocialMediaHub\Infrastructure\Security\SignedMediaEndpoint;
 use SocialMediaHub\Infrastructure\Security\TokenSafe;
@@ -35,6 +36,7 @@ class RestController
     private SignedMediaEndpoint $signedMediaEndpoint;
     private TokenSafe $tokenSafe;
     private EventBus $eventBus;
+    private LiveApiClient $liveApiClient;
 
     public function __construct(
         Repositories $repositories,
@@ -44,7 +46,8 @@ class RestController
         BackupExporter $backupExporter,
         SignedMediaEndpoint $signedMediaEndpoint,
         TokenSafe $tokenSafe,
-        EventBus $eventBus
+        EventBus $eventBus,
+        ?LiveApiClient $liveApiClient = null
     ) {
         $this->repositories = $repositories;
         $this->providerRegistry = $providerRegistry;
@@ -54,6 +57,7 @@ class RestController
         $this->signedMediaEndpoint = $signedMediaEndpoint;
         $this->tokenSafe = $tokenSafe;
         $this->eventBus = $eventBus;
+        $this->liveApiClient = $liveApiClient ?? new LiveApiClient();
     }
 
     public function registerRoutes(): void
@@ -293,7 +297,18 @@ class RestController
     {
         $saved = $this->repositories->saveAccount($this->extractJson($request));
         $this->repositories->recordAudit('account.saved', 'Kanal gespeichert', (string) ($saved['handle'] ?? ''), (string) ($saved['brand_id'] ?? ''), null, (string) $saved['id']);
-        return ['ok' => true, 'account_id' => $saved['id'], 'state' => $this->buildSanitizedClientState()];
+
+        $verification = null;
+        if (($saved['connection_state'] ?? '') === 'unverified') {
+            $verification = $this->runAndPersistLiveVerification((string) $saved['id']);
+        }
+
+        return [
+            'ok'           => true,
+            'account_id'   => $saved['id'],
+            'verification' => $verification,
+            'state'        => $this->buildSanitizedClientState(),
+        ];
     }
 
     public function handleDeleteAccount($request): array
@@ -311,10 +326,71 @@ class RestController
         if ($account === null) {
             return ['ok' => false, 'error' => 'Kanal nicht gefunden.'];
         }
-        $provider = $this->providerRegistry->get((string) ($account['platform'] ?? ''));
-        $cap = $provider !== null ? $provider->evaluateAccountCapabilities($account) : ['status' => 'unknown', 'reason' => 'Provider fehlt'];
-        $this->repositories->updateAccount($id, ['last_checked_at' => gmdate('Y-m-d\TH:i:s\Z')]);
-        return ['ok' => true, 'diagnosis' => $cap, 'state' => $this->buildSanitizedClientState()];
+
+        $verification = $this->runAndPersistLiveVerification($id);
+        $updated = $this->repositories->findAccount($id) ?? $account;
+        $provider = $this->providerRegistry->get((string) ($updated['platform'] ?? ''));
+        $cap = $provider !== null ? $provider->evaluateAccountCapabilities($updated) : ['status' => 'unknown', 'reason' => 'Provider fehlt'];
+
+        return [
+            'ok'           => true,
+            'verified'     => (bool) ($verification['ok'] ?? false),
+            'verification' => $verification,
+            'diagnosis'    => $cap,
+            'state'        => $this->buildSanitizedClientState(),
+        ];
+    }
+
+    /**
+     * Führt eine echte HTTPS-Live-Prüfung gegen die jeweilige Plattform-API durch
+     * und speichert das ehrliche Ergebnis (HTTP-Code, Endpunkt, Fehlermeldung oder Verifizierung).
+     *
+     * @return array<string, mixed>
+     */
+    private function runAndPersistLiveVerification(string $accountId): array
+    {
+        $account = $this->repositories->findAccount($accountId);
+        if ($account === null) {
+            return ['ok' => false, 'message' => 'Kanal nicht gefunden.'];
+        }
+
+        $encrypted = (string) ($account['encrypted_secrets'] ?? '');
+        $decrypted = $encrypted !== '' ? $this->tokenSafe->decryptSecrets($encrypted) : [];
+        $result = $this->liveApiClient->verifyConnection($account, $decrypted);
+
+        $updates = [
+            'connection_state'     => (string) ($result['connection_state'] ?? 'blocked'),
+            'granted_scopes'       => (array) ($result['granted_scopes'] ?? []),
+            'last_check_http_code' => (int) ($result['http_code'] ?? 0),
+            'last_check_endpoint'  => (string) ($result['endpoint'] ?? ''),
+            'last_check_message'   => (string) ($result['message'] ?? ''),
+            'last_checked_at'      => (string) ($result['checked_at'] ?? gmdate('Y-m-d\TH:i:s\Z')),
+            'live_verified_at'     => (!empty($result['ok']) && in_array($result['connection_state'] ?? '', ['connected', 'handoff_only'], true))
+                ? (string) ($result['checked_at'] ?? gmdate('Y-m-d\TH:i:s\Z'))
+                : null,
+        ];
+
+        if (!empty($result['verified_handle'])) {
+            $updates['verified_handle'] = (string) $result['verified_handle'];
+        }
+        if (!empty($result['external_account_id']) && empty($account['external_account_id'])) {
+            $updates['external_account_id'] = (string) $result['external_account_id'];
+        }
+        if (isset($result['instance_limits']) && is_array($result['instance_limits'])) {
+            $updates['instance_limits'] = $result['instance_limits'];
+        }
+
+        $this->repositories->updateAccount($accountId, $updates);
+        $this->repositories->recordAudit(
+            !empty($result['ok']) ? 'account.live_verified' : 'account.live_check_failed',
+            !empty($result['ok']) ? 'Kanal-Verbindung live bestätigt' : 'Live-Verbindungsprüfung fehlgeschlagen',
+            sprintf('%s · %s', (string) ($account['handle'] ?? $accountId), (string) ($result['message'] ?? '')),
+            (string) ($account['brand_id'] ?? ''),
+            null,
+            $accountId
+        );
+
+        return $result;
     }
 
     public function handleSaveMedia($request): array

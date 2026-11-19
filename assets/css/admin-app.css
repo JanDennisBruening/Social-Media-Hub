@@ -498,6 +498,16 @@ body.smh-admin-screen #wpfooter {
   color: var(--smh-danger);
 }
 
+.smh-pill.not_configured {
+  background: #eceff5;
+  color: #5a6780;
+}
+
+.smh-pill.unknown {
+  background: var(--smh-warn-bg);
+  color: var(--smh-warn);
+}
+
 .smh-pill.scheduled,
 .smh-pill.queued,
 .smh-pill.ready_mix {
@@ -707,6 +717,121 @@ body.smh-admin-screen #wpfooter {
 
 .smh-table tr.selected td {
   background: #f4f6ff;
+}
+
+.smh-post-link-cell {
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  transition: background 0.14s;
+}
+
+.smh-post-link-cell:hover {
+  background: #f3f6ff;
+}
+
+.smh-post-link-cell:hover strong {
+  color: var(--smh-accent);
+  text-decoration: underline;
+}
+
+/* Große Beitrags-Detailansicht */
+.smh-detail-hero {
+  background: #eef2fa;
+  border: 1px solid var(--smh-line);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 18px;
+  max-height: 460px;
+  display: grid;
+  place-items: center;
+}
+
+.smh-detail-hero img {
+  width: 100%;
+  max-height: 460px;
+  object-fit: contain;
+  background: #f7f9fd;
+  display: block;
+}
+
+.smh-detail-text {
+  font-size: 14.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #fafbfe;
+  border: 1px solid var(--smh-line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.smh-meta-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.smh-meta-box {
+  background: #f7f9fd;
+  border: 1px solid var(--smh-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.smh-meta-box small {
+  display: block;
+  color: var(--smh-muted);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+/* Live-Verbindungs-Diagnosebox für Kanäle */
+.smh-channel-item {
+  border: 1px solid var(--smh-line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: #fff;
+}
+
+.smh-channel-item:last-child {
+  margin-bottom: 0;
+}
+
+.smh-diag-box {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  border: 1px solid var(--smh-line);
+  background: #f8f9fc;
+  color: #465470;
+}
+
+.smh-diag-box.ready {
+  background: var(--smh-success-bg);
+  border-color: #b7e5d4;
+  color: var(--smh-success);
+}
+
+.smh-diag-box.blocked {
+  background: var(--smh-danger-bg);
+  border-color: #f3c2ca;
+  color: var(--smh-danger);
+}
+
+.smh-diag-box.warn {
+  background: var(--smh-warn-bg);
+  border-color: #f2d5a4;
+  color: var(--smh-warn);
 }
 
 .smh-thumb {

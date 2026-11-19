@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 namespace SocialMediaHub\Providers;
 
+use SocialMediaHub\Infrastructure\Http\LiveApiClient;
 use SocialMediaHub\Infrastructure\Security\SignedMediaEndpoint;
 
 class ConfigurablePlatformProvider implements ProviderInterface
@@ -21,15 +22,21 @@ class ConfigurablePlatformProvider implements ProviderInterface
     /** @var array<string, mixed> */
     private array $spec;
     private SignedMediaEndpoint $signedMediaEndpoint;
+    private LiveApiClient $liveApiClient;
 
     /**
      * @param array<string, mixed> $spec
      */
-    public function __construct(string $platformKey, array $spec, SignedMediaEndpoint $signedMediaEndpoint)
-    {
+    public function __construct(
+        string $platformKey,
+        array $spec,
+        SignedMediaEndpoint $signedMediaEndpoint,
+        ?LiveApiClient $liveApiClient = null
+    ) {
         $this->platformKey = $platformKey;
         $this->spec = $spec;
         $this->signedMediaEndpoint = $signedMediaEndpoint;
+        $this->liveApiClient = $liveApiClient ?? new LiveApiClient();
     }
 
     public function getPlatformKey(): string
@@ -46,11 +53,13 @@ class ConfigurablePlatformProvider implements ProviderInterface
     {
         $now = gmdate('Y-m-d\TH:i:s\Z');
         $accountType = (string) ($account['account_type'] ?? 'standard');
-        $connectionState = (string) ($account['connection_state'] ?? 'unverified');
+        $connectionState = (string) ($account['connection_state'] ?? 'not_configured');
         $grantedScopes = array_values(array_map('strval', (array) ($account['granted_scopes'] ?? [])));
         $expiresAt = isset($account['token_expires_at']) ? (string) $account['token_expires_at'] : '';
+        $liveVerifiedAt = trim((string) ($account['live_verified_at'] ?? ''));
+        $lastCheckMessage = trim((string) ($account['last_check_message'] ?? ''));
 
-        // 1. Rein manuelle Kanäle (WhatsApp-Kanal, Signal oder manuell konfiguriertes Telegram)
+        // 1. Rein manuelle Kanäle (WhatsApp-Kanal, Signal oder bewusst manuell gesetzter Kanal)
         if (in_array($this->platformKey, ['whatsapp', 'signal'], true) || $connectionState === 'manual') {
             return [
                 'status'         => 'manual',
@@ -58,59 +67,91 @@ class ConfigurablePlatformProvider implements ProviderInterface
                 'reason'         => 'Manueller Übergabe-Kanal (Text kopieren, Bild laden & Veröffentlichung bestätigen).',
                 'missing_scopes' => [],
                 'token_expired'  => false,
+                'live_verified'  => false,
                 'evaluated_at'   => $now,
             ];
         }
 
-        // 2. Noch nicht geprüfte Verbindungen (z. B. neue Mastodon-Instanz)
-        if ($connectionState === 'unverified' || $connectionState === 'unknown') {
+        // 2. Kein API-Schlüssel / Access-Token hinterlegt
+        if ($connectionState === 'not_configured') {
+            return [
+                'status'         => 'not_configured',
+                'delivery_mode'  => 'blocked',
+                'reason'         => $lastCheckMessage !== ''
+                    ? $lastCheckMessage
+                    : 'Noch kein API-Schlüssel hinterlegt. Bitte Zugangsdaten eintragen oder auf manuellen Modus umstellen.',
+                'missing_scopes' => [],
+                'token_expired'  => false,
+                'live_verified'  => false,
+                'evaluated_at'   => $now,
+            ];
+        }
+
+        // 3. Noch nicht live gegen die Plattform-API geprüft (NIEMALS blind als „verbunden“ ausgeben!)
+        if (
+            $connectionState === 'unverified'
+            || $connectionState === 'unknown'
+            || (in_array($connectionState, ['connected', 'handoff_only'], true) && $liveVerifiedAt === '')
+        ) {
             return [
                 'status'         => 'unknown',
                 'delivery_mode'  => 'unknown',
-                'reason'         => 'Verbindung und Veröffentlichungsrechte wurden noch nicht geprüft.',
+                'reason'         => $lastCheckMessage !== ''
+                    ? $lastCheckMessage
+                    : 'Noch nicht live gegen die Plattform-API geprüft. Bitte auf „Live prüfen“ klicken.',
                 'missing_scopes' => [],
                 'token_expired'  => false,
+                'live_verified'  => false,
                 'evaluated_at'   => $now,
             ];
         }
 
-        // 3. Abgelaufenes OAuth-Token prüfen
+        // 4. Abgelaufenes OAuth-Token prüfen
         $tokenExpired = ($connectionState === 'expired')
             || ($expiresAt !== '' && strtotime($expiresAt) !== false && strtotime($expiresAt) <= time());
 
-        // 4. Erforderliche Scopes für diesen Kontotyp prüfen (z. B. w_organization_social bei LinkedIn Company)
+        // 5. Erforderliche Scopes für diesen Kontotyp prüfen (z. B. w_organization_social bei LinkedIn Company)
         $requiredByType = (array) ($this->spec['required_scopes'][$accountType] ?? []);
         $missingScopes = array_values(array_diff($requiredByType, $grantedScopes));
 
         if ($tokenExpired || $missingScopes !== [] || $connectionState === 'blocked') {
-            $reasonParts = [];
-            if ($tokenExpired) {
-                $reasonParts[] = 'Zugangstoken ist abgelaufen';
-            }
-            if ($missingScopes !== []) {
-                $reasonParts[] = 'Fehlende Berechtigung (' . implode(', ', $missingScopes) . ')';
-            }
-            if ($reasonParts === []) {
-                $reasonParts[] = 'Konto-Autorisierung ungültig oder gesperrt';
+            if ($connectionState === 'blocked' && $lastCheckMessage !== '' && !$tokenExpired) {
+                $reason = $lastCheckMessage;
+            } else {
+                $reasonParts = [];
+                if ($tokenExpired) {
+                    $reasonParts[] = 'Zugangstoken ist abgelaufen';
+                }
+                if ($missingScopes !== []) {
+                    $reasonParts[] = 'Fehlende Berechtigung (' . implode(', ', $missingScopes) . ')';
+                }
+                if ($reasonParts === []) {
+                    $reasonParts[] = 'API-Verbindung fehlgeschlagen oder Token ungültig';
+                }
+                $reason = implode(' · ', $reasonParts) . '. Bitte Zugangsdaten prüfen und erneut testen.';
             }
             return [
                 'status'         => 'blocked',
                 'delivery_mode'  => 'blocked',
-                'reason'         => implode(' · ', $reasonParts) . '. Bitte Konto neu autorisieren.',
+                'reason'         => $reason,
                 'missing_scopes' => $missingScopes,
                 'token_expired'  => $tokenExpired,
+                'live_verified'  => false,
                 'evaluated_at'   => $now,
             ];
         }
 
-        // 5. App-Fertigstellung (Handoff), z. B. TikTok Upload ohne Direct-Post-Audit
+        // 6. App-Fertigstellung (Handoff), z. B. TikTok nach erfolgreicher Live-Prüfung
         if ($connectionState === 'handoff_only' || ($this->platformKey === 'tiktok' && !in_array('video.publish', $grantedScopes, true))) {
             return [
                 'status'         => 'handoff',
                 'delivery_mode'  => 'handoff',
-                'reason'         => 'Upload an die Ziel-App möglich; finaler Abschluss erfolgt in der App.',
+                'reason'         => $lastCheckMessage !== ''
+                    ? $lastCheckMessage
+                    : 'Live geprüft – Upload an die Ziel-App möglich; finaler Abschluss erfolgt in der App.',
                 'missing_scopes' => [],
                 'token_expired'  => false,
+                'live_verified'  => true,
                 'evaluated_at'   => $now,
             ];
         }
@@ -118,9 +159,12 @@ class ConfigurablePlatformProvider implements ProviderInterface
         return [
             'status'         => 'ready',
             'delivery_mode'  => 'api',
-            'reason'         => 'Konto verbunden und Berechtigungen gültig.',
+            'reason'         => $lastCheckMessage !== ''
+                ? $lastCheckMessage
+                : 'Live über Plattform-API verifiziert und bereit zum Veröffentlichen.',
             'missing_scopes' => [],
             'token_expired'  => false,
+            'live_verified'  => true,
             'evaluated_at'   => $now,
         ];
     }
@@ -290,7 +334,7 @@ class ConfigurablePlatformProvider implements ProviderInterface
             $advice[] = 'Story mit nativen Stickern/Musik ist als manuelle Übergabe eingeplant.';
         }
 
-        if ($cap['status'] === 'blocked') {
+        if (in_array($cap['status'], ['blocked', 'not_configured'], true)) {
             $issues[] = $cap['reason'];
         }
 
@@ -366,17 +410,17 @@ class ConfigurablePlatformProvider implements ProviderInterface
     ): array {
         $cap = $this->evaluateAccountCapabilities($account);
 
-        if ($cap['status'] === 'blocked' || empty($decryptedSecrets['access_token'])) {
+        if ($cap['status'] !== 'ready' || empty($cap['live_verified']) || empty($decryptedSecrets['access_token'])) {
             return [
                 'outcome'       => 'failed_permanent',
                 'http_code'     => 401,
-                'error_code'    => 'auth_expired_or_missing_scope',
-                'error_message' => $cap['reason'],
+                'error_code'    => 'not_live_verified',
+                'error_message' => 'Kanal ist nicht live verbunden/geprüft (' . $cap['reason'] . '). Es wurde nichts simuliert.',
                 'retryable'     => false,
             ];
         }
 
-        // Simulierter transienter Rate-Limit-Fehler (HTTP 429) für automatisierte Backoff-Tests
+        // Simulierter transienter Rate-Limit-Fehler (HTTP 429) ausschließlich für automatisierte Backoff-Tests
         if (!empty($snapshotVariant['metadata']['simulate_rate_limit']) && ((int) ($job['attempt_count'] ?? 0)) <= 1) {
             return [
                 'outcome'       => 'failed_retryable',
@@ -387,26 +431,28 @@ class ConfigurablePlatformProvider implements ProviderInterface
             ];
         }
 
-        // Für Pull-APIs (Instagram/Threads) wird eine kurzlebige, HMAC-signierte Medien-Abhol-URL erzeugt
+        $postGroup = is_array($snapshotVariant['_post_group'] ?? null) ? $snapshotVariant['_post_group'] : [];
+        $effectiveText = (string) ($snapshotVariant['_effective_text'] ?? ($snapshotVariant['text_override'] ?? ($postGroup['master_text'] ?? '')));
+        $mediaUrl = isset($snapshotVariant['_media_url']) && trim((string) $snapshotVariant['_media_url']) !== ''
+            ? (string) $snapshotVariant['_media_url']
+            : null;
+
+        // Für Pull-APIs (Instagram/Threads) alternativ signierte Abhol-URL erzeugen, falls keine direkte URL vorliegt
         $mediaIds = (array) ($snapshotVariant['media_ids'] ?? []);
         $renditionKey = (string) ($snapshotVariant['rendition_key'] ?? '4:5');
-        $signedPullUrl = null;
-        if (($this->spec['media_transport'] ?? '') === 'pull_signed_url' && $mediaIds !== []) {
-            $signedPullUrl = $this->signedMediaEndpoint->createSignedPullUrl((string) $mediaIds[0], $renditionKey, 900);
+        if ($mediaUrl === null && ($this->spec['media_transport'] ?? '') === 'pull_signed_url' && $mediaIds !== []) {
+            $mediaUrl = $this->signedMediaEndpoint->createSignedPullUrl((string) $mediaIds[0], $renditionKey, 900);
         }
 
-        $remotePostId = $this->platformKey . '_' . substr(hash('sha256', (string) ($job['idempotency_key'] ?? uniqid())), 0, 12);
-        $handleSlug = preg_replace('/[^a-z0-9._-]+/i', '', ltrim((string) ($account['handle'] ?? 'account'), '@')) ?: 'post';
-        $remoteUrl = sprintf('https://%s.example.com/%s/posts/%s', $this->platformKey, strtolower($handleSlug), $remotePostId);
-
-        return [
-            'outcome'             => 'published',
-            'http_code'           => 200,
-            'remote_container_id' => $signedPullUrl !== null ? 'cnt_' . substr(md5($signedPullUrl), 0, 10) : null,
-            'remote_post_id'      => $remotePostId,
-            'remote_url'          => $remoteUrl,
-            'signed_pull_url'     => $signedPullUrl,
-        ];
+        // Echter HTTPS-Versand an die offizielle Plattform-API (keine simulierten Scheinergebnisse)
+        return $this->liveApiClient->publishLive(
+            $postGroup,
+            $snapshotVariant,
+            $account,
+            $decryptedSecrets,
+            $effectiveText,
+            $mediaUrl
+        );
     }
 
     private function resolveCharLimit(array $account): ?int

@@ -198,6 +198,30 @@ class Repositories
         if ($saved['brands'] === []) {
             $saved['brands'] = $defaults['brands'];
         }
+
+        // Ehrlichkeit beim Upgrade auf v2.1.0:
+        // Konten, die früher ohne echten Live-API-Check als „connected“ gespeichert wurden,
+        // werden sauber auf „unverified“ bzw. „not_configured“ herabgestuft.
+        foreach ($saved['accounts'] as $idx => $acc) {
+            $platform = strtolower((string) ($acc['platform'] ?? ''));
+            $st = (string) ($acc['connection_state'] ?? 'not_configured');
+            if (in_array($platform, ['whatsapp', 'signal'], true) || $st === 'manual') {
+                continue;
+            }
+            $hasSecrets = trim((string) ($acc['encrypted_secrets'] ?? '')) !== '';
+            $hasLiveVerified = trim((string) ($acc['live_verified_at'] ?? '')) !== '';
+            if (!$hasSecrets && $st !== 'not_configured') {
+                $saved['accounts'][$idx]['connection_state'] = 'not_configured';
+                $saved['accounts'][$idx]['granted_scopes'] = [];
+                $saved['accounts'][$idx]['live_verified_at'] = null;
+                $saved['accounts'][$idx]['last_check_message'] = 'Kein API-Schlüssel hinterlegt.';
+            } elseif (in_array($st, ['connected', 'handoff_only'], true) && !$hasLiveVerified) {
+                $saved['accounts'][$idx]['connection_state'] = 'unverified';
+                $saved['accounts'][$idx]['granted_scopes'] = [];
+                $saved['accounts'][$idx]['last_check_message'] = 'Noch nicht live gegen die Plattform-API geprüft. Bitte auf „Live prüfen“ klicken.';
+            }
+        }
+
         $saved['schema_version'] = 2;
         return $saved;
     }
@@ -376,11 +400,22 @@ class Repositories
         $existingEncrypted = (string) ($existing['encrypted_secrets'] ?? '');
         $secrets = $existingEncrypted !== '' ? $this->tokenSafe->decryptSecrets($existingEncrypted) : [];
 
+        $clearToken = !empty($input['clear_token']);
         $newToken = trim((string) ($input['access_token'] ?? ''));
         $newRefresh = trim((string) ($input['refresh_token'] ?? ''));
         $newIdentifier = trim((string) ($input['external_account_id'] ?? ($existing['external_account_id'] ?? '')));
         $instanceUrl = trim((string) ($input['instance_url'] ?? ($existing['instance_url'] ?? '')));
 
+        $credentialsChanged = $existing === null
+            || $clearToken
+            || $newToken !== ''
+            || $newIdentifier !== (string) ($existing['external_account_id'] ?? '')
+            || $instanceUrl !== (string) ($existing['instance_url'] ?? '')
+            || $platform !== (string) ($existing['platform'] ?? '');
+
+        if ($clearToken) {
+            unset($secrets['access_token'], $secrets['refresh_token']);
+        }
         if ($newToken !== '') {
             $secrets['access_token'] = $newToken;
         }
@@ -392,55 +427,62 @@ class Repositories
         }
 
         $encryptedSecrets = $secrets !== [] ? $this->tokenSafe->encryptSecrets($secrets) : '';
+        $hasToken = trim((string) ($secrets['access_token'] ?? '')) !== '';
 
-        // Realistischer Verbindungsstatus: manuell für WhatsApp/Signal, verbunden wenn Token hinterlegt, sonst unverified
+        // Ehrlicher Verbindungsstatus (v2.1.0):
+        // Ein API-Kanal wird NIEMALS beim Speichern blind auf „connected“ gesetzt!
+        // Erst ein echter Live-HTTP-Check gegen die Plattform-API darf „connected“ vergeben.
         $requestedState = trim((string) ($input['connection_state'] ?? ''));
+        $liveVerifiedAt = $credentialsChanged ? null : ($existing['live_verified_at'] ?? null);
+        $lastCheckHttpCode = $credentialsChanged ? null : ($existing['last_check_http_code'] ?? null);
+        $lastCheckEndpoint = $credentialsChanged ? '' : (string) ($existing['last_check_endpoint'] ?? '');
+        $lastCheckMessage = $credentialsChanged ? '' : (string) ($existing['last_check_message'] ?? '');
+        $verifiedHandle = $credentialsChanged ? null : ($existing['verified_handle'] ?? null);
+
         if ($isManualPlatform || $requestedState === 'manual') {
             $connectionState = 'manual';
             $authMode = 'manual_handoff';
-        } elseif ($requestedState !== '') {
-            $connectionState = $requestedState;
-            $authMode = (string) ($input['auth_mode'] ?? ($existing['auth_mode'] ?? 'direct_credentials'));
-        } elseif (!empty($secrets['access_token'])) {
-            $connectionState = $platform === 'tiktok' ? 'handoff_only' : 'connected';
-            $authMode = (string) ($input['auth_mode'] ?? 'direct_credentials');
+            $liveVerifiedAt = null;
+            $lastCheckMessage = 'Manueller Übergabe-Kanal (ohne API-Verbindung).';
+        } elseif (!$hasToken) {
+            $connectionState = 'not_configured';
+            $authMode = 'direct_credentials';
+            $liveVerifiedAt = null;
+            $lastCheckMessage = 'Kein API-Schlüssel hinterlegt. Bitte Zugangsdaten eintragen oder auf manuellen Modus umstellen.';
+        } elseif ($credentialsChanged) {
+            $connectionState = 'unverified';
+            $authMode = 'direct_credentials';
+            $lastCheckMessage = 'Zugangsdaten gespeichert – noch nicht live über die Plattform-API geprüft.';
         } else {
             $connectionState = (string) ($existing['connection_state'] ?? 'unverified');
-            $authMode = (string) ($input['auth_mode'] ?? 'direct_credentials');
+            $authMode = (string) ($existing['auth_mode'] ?? 'direct_credentials');
         }
-
-        $defaultScopes = match ($platform) {
-            'instagram' => ['instagram_basic', 'instagram_content_publish'],
-            'facebook'  => ['pages_manage_posts'],
-            'linkedin'  => $accountType === 'organization' ? ['w_organization_social'] : ['w_member_social'],
-            'threads'   => ['threads_basic', 'threads_content_publish'],
-            'tiktok'    => ['video.upload'],
-            'pinterest' => ['boards:read', 'pins:write'],
-            'bluesky'   => ['com.atproto.repo.createRecord'],
-            'mastodon'  => ['write:statuses', 'write:media'],
-            default     => [],
-        };
 
         $grantedScopes = isset($input['granted_scopes']) && is_array($input['granted_scopes'])
             ? array_values(array_map('strval', $input['granted_scopes']))
-            : (!empty($secrets['access_token']) ? $defaultScopes : (array) ($existing['granted_scopes'] ?? []));
+            : ($credentialsChanged ? [] : (array) ($existing['granted_scopes'] ?? []));
 
         $record = [
-            'id'                  => $id,
-            'brand_id'            => $brandId,
-            'platform'            => $platform,
-            'account_type'        => $accountType,
-            'handle'              => trim((string) ($input['handle'] ?? ($existing['handle'] ?? 'Neuer Kanal'))),
-            'external_account_id' => $newIdentifier,
-            'instance_url'        => $instanceUrl,
-            'auth_mode'           => $authMode,
-            'connection_state'    => $connectionState,
-            'granted_scopes'      => $grantedScopes,
-            'instance_limits'     => $input['instance_limits'] ?? ($existing['instance_limits'] ?? null),
-            'encrypted_secrets'   => $encryptedSecrets,
-            'token_expires_at'    => $input['token_expires_at'] ?? ($existing['token_expires_at'] ?? null),
-            'last_checked_at'     => $now,
-            'updated_at'          => $now,
+            'id'                   => $id,
+            'brand_id'             => $brandId,
+            'platform'             => $platform,
+            'account_type'         => $accountType,
+            'handle'               => trim((string) ($input['handle'] ?? ($existing['handle'] ?? 'Neuer Kanal'))),
+            'external_account_id'  => $newIdentifier,
+            'instance_url'         => $instanceUrl,
+            'auth_mode'            => $authMode,
+            'connection_state'     => $connectionState,
+            'granted_scopes'       => $grantedScopes,
+            'instance_limits'      => $input['instance_limits'] ?? ($existing['instance_limits'] ?? null),
+            'encrypted_secrets'    => $encryptedSecrets,
+            'token_expires_at'     => $input['token_expires_at'] ?? ($existing['token_expires_at'] ?? null),
+            'live_verified_at'     => $liveVerifiedAt,
+            'verified_handle'      => $verifiedHandle,
+            'last_check_http_code' => $lastCheckHttpCode,
+            'last_check_endpoint'  => $lastCheckEndpoint,
+            'last_check_message'   => $lastCheckMessage,
+            'last_checked_at'      => $existing['last_checked_at'] ?? null,
+            'updated_at'           => $now,
         ];
 
         foreach ($this->state['accounts'] as $idx => $item) {
