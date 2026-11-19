@@ -98,10 +98,81 @@
   const findBrand = (id) => (state.brands || []).find((b) => b.id === id);
   const brandName = (id) => findBrand(id)?.name || 'Hauptprofil';
 
+  // Plattformspezifische Zugangsdaten-Hinweise für den Kanal-Dialog
+  const PLATFORM_CREDS = {
+    instagram: {
+      idLabel: 'Instagram Business Account ID (z. B. 17841400…)',
+      idPlaceholder: 'Bei IG…-Token optional, bei Meta Graph Token (EAAG…) erforderlich',
+      tokenLabel: 'Instagram / Meta Graph Access Token',
+      tokenHint: 'Wird beim Speichern und bei „Live prüfen“ echt gegen graph.instagram.com bzw. graph.facebook.com geprüft.',
+    },
+    facebook: {
+      idLabel: 'Facebook Seiten-ID (Page ID)',
+      idPlaceholder: 'z. B. 102938475612345',
+      tokenLabel: 'Facebook Page Access Token (mit pages_manage_posts)',
+      tokenHint: 'Wird live über die Facebook Graph API v21.0 verifiziert.',
+    },
+    linkedin: {
+      idLabel: 'LinkedIn Author-URN (optional – wird bei Live-Prüfung erkannt)',
+      idPlaceholder: 'z. B. urn:li:person:… oder urn:li:organization:…',
+      tokenLabel: 'LinkedIn OAuth 2.0 Access Token',
+      tokenHint: 'Wird live über api.linkedin.com/v2/userinfo geprüft.',
+    },
+    threads: {
+      idLabel: 'Threads User-ID (optional – wird bei Live-Prüfung erkannt)',
+      idPlaceholder: 'Optional',
+      tokenLabel: 'Meta Threads Access Token',
+      tokenHint: 'Wird live gegen graph.threads.net/v1.0/me geprüft.',
+    },
+    pinterest: {
+      idLabel: 'Pinterest Benutzername (optional)',
+      idPlaceholder: 'Wird automatisch aus API gelesen',
+      tokenLabel: 'Pinterest API v5 OAuth Access Token',
+      tokenHint: 'Wird live über api.pinterest.com/v5/user_account geprüft.',
+    },
+    bluesky: {
+      idLabel: 'Bluesky-Handle (Identifier) *',
+      idPlaceholder: 'z. B. deinname.bsky.social',
+      tokenLabel: 'Bluesky App-Passwort',
+      tokenHint: 'Erstelle in Bluesky unter Einstellungen → App-Passwörter ein eigenes App-Passwort. Wird live per ATProto verifiziert.',
+    },
+    mastodon: {
+      idLabel: 'Konto-ID (wird automatisch erkannt)',
+      idPlaceholder: 'Optional',
+      needsInstance: true,
+      tokenLabel: 'Mastodon Application Access Token',
+      tokenHint: 'Wird live gegen deine Mastodon-Instanz geprüft und liest das echte Zeichenlimit aus.',
+    },
+    telegram: {
+      idLabel: 'Telegram Kanal-Username oder Chat-ID *',
+      idPlaceholder: 'z. B. @mein_kanal oder -1001234567890',
+      tokenLabel: 'Telegram Bot-Token (von @BotFather)',
+      tokenHint: 'Der Bot muss als Administrator im Kanal eingetragen sein. Wird live über api.telegram.org geprüft.',
+    },
+    tiktok: {
+      idLabel: 'TikTok Open-ID (optional)',
+      idPlaceholder: 'Wird automatisch aus API gelesen',
+      tokenLabel: 'TikTok Content Posting OAuth Token',
+      tokenHint: 'Wird live über open.tiktokapis.com/v2/user/info/ geprüft.',
+    },
+  };
+
+  function channelStatusInfo(account) {
+    const st = account?.capability_diagnosis?.status || account?.connection_state || 'not_configured';
+    if (st === 'ready') return { cls: 'ready', label: 'Live verbunden ✓', diagCls: 'ready' };
+    if (st === 'manual') return { cls: 'manual', label: 'Manueller Kanal', diagCls: 'warn' };
+    if (st === 'handoff') return { cls: 'handoff', label: 'App-Übergabe ✓', diagCls: 'ready' };
+    if (st === 'not_configured') return { cls: 'not_configured', label: 'Nicht verbunden', diagCls: '' };
+    if (st === 'blocked') return { cls: 'blocked', label: 'Verbindung fehlgeschlagen', diagCls: 'blocked' };
+    return { cls: 'unknown', label: 'Noch nicht geprüft', diagCls: 'warn' };
+  }
+
   // UI-Zustand
   let view = 'posts'; // Start direkt auf der großen Beitragsliste bzw. Übersicht
   if (!(state.post_groups || []).length) view = 'dashboard';
   let activeBrand = 'all';
+  let activeDetailPostId = null;
+  let testingChannelId = null;
 
   // Filter & Mehrfachauswahl in der Beitragsliste
   let postTab = 'all';
@@ -205,6 +276,14 @@
       list.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
     }
     return list;
+  }
+
+  function openPostDetail(postId) {
+    const post = (state.post_groups || []).find((p) => p.id === postId);
+    if (!post) return;
+    activeDetailPostId = post.id;
+    view = 'detail';
+    render();
   }
 
   function openNewPostWizard(existingPost = null, prefillDay = null, initialStep = 1) {
@@ -473,7 +552,7 @@
           </div>
           ${posts.length ? posts.slice(0, 6).map((p) => `
             <div class="smh-row">
-              <div style="min-width:0">
+              <div class="smh-post-link-cell" data-open-detail="${esc(p.id)}" style="min-width:0;flex:1">
                 <strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.title)}</strong>
                 <div class="smh-hint">${esc(p.campaign || 'Allgemein')} · ${esc(formatDate(p.scheduled_at))}</div>
                 <div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
@@ -482,7 +561,7 @@
               </div>
               <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
                 <span class="smh-pill ${esc(p.summary?.composite_state || 'draft')}">${esc(p.summary?.composite_label || 'Entwurf')}</span>
-                <button class="smh-btn sm" data-edit-post="${esc(p.id)}" data-step="3">Prüfen</button>
+                <button class="smh-btn sm" data-open-detail="${esc(p.id)}">Öffnen</button>
               </div>
             </div>
           `).join('') : `
@@ -497,8 +576,7 @@
             <button class="smh-btn sm" data-action="open-new-channel">+ Kanal hinzufügen</button>
           </div>
           ${accounts.length ? accounts.map((a) => {
-            const st = a.capability_diagnosis?.status || 'unknown';
-            const label = st === 'ready' ? 'Verbunden' : (st === 'manual' ? 'Manuell' : (st === 'handoff' ? 'App-Übergabe' : (st === 'blocked' ? 'Verbindung prüfen' : 'Ungeprüft')));
+            const stInfo = channelStatusInfo(a);
             return `
               <div class="smh-row">
                 <div style="display:flex;align-items:center;gap:10px;min-width:0">
@@ -508,7 +586,7 @@
                     <div class="smh-hint">${esc(PLATFORMS[a.platform]?.label || a.platform)}</div>
                   </div>
                 </div>
-                <span class="smh-pill ${esc(st)}">${esc(label)}</span>
+                <span class="smh-pill ${esc(stInfo.cls)}">${esc(stInfo.label)}</span>
               </div>
             `;
           }).join('') : `
@@ -612,7 +690,7 @@
                   <tr class="${checked ? 'selected' : ''}">
                     <td><input type="checkbox" class="smh-post-check" value="${esc(p.id)}" ${checked ? 'checked' : ''}></td>
                     <td style="min-width:280px">
-                      <div style="display:flex;align-items:center;gap:12px">
+                      <div class="smh-post-link-cell" data-open-detail="${esc(p.id)}" title="Klicken für große Beitrags-Übersicht" style="display:flex;align-items:center;gap:12px">
                         <div class="smh-thumb">${thumbHtml}</div>
                         <div style="min-width:0">
                           <strong style="display:block;font-size:13.5px">${esc(p.title || 'Ohne Titel')}</strong>
@@ -634,6 +712,7 @@
                     </td>
                     <td style="text-align:right;white-space:nowrap">
                       <div style="display:inline-flex;gap:5px">
+                        <button class="smh-btn sm" data-open-detail="${esc(p.id)}">Öffnen</button>
                         <button class="smh-btn sm" data-edit-post="${esc(p.id)}" data-step="2">Bearbeiten</button>
                         <button class="smh-btn sm primary" data-edit-post="${esc(p.id)}" data-step="3">Prüfen & Senden</button>
                         <button class="smh-btn sm" data-single-move="${esc(p.id)}" title="In anderen Ordner, Status oder Termin verschieben">Verschieben</button>
@@ -654,6 +733,135 @@
           <button class="smh-btn primary lg" data-action="new-post">+ Neuen Beitrag erstellen</button>
         </div>
       `}
+    `;
+  }
+
+  // ===========================================================================
+  // ANSICHT 2B: GROSSE BEITRAGS-DETAILÜBERSICHT (BEIM ANKLICKEN IN DER LISTE)
+  // ===========================================================================
+  function renderPostDetail() {
+    const p = (state.post_groups || []).find((x) => x.id === activeDetailPostId);
+    if (!p) {
+      view = 'posts';
+      return renderPostsList();
+    }
+    const media = findMedia(p.primary_media_id);
+    const targets = (p.targets || []).map((tid) => ({
+      acc: findAccount(tid),
+      check: p.summary?.per_target?.[tid] || {},
+      v: p.variants?.[tid] || {},
+    })).filter((item) => item.acc);
+    const revisions = (state.revisions || []).filter((r) => r.post_group_id === p.id).slice(-5).reverse();
+
+    return `
+      <div class="smh-card" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="smh-btn" data-nav="posts">← Zurück zur Beitragsliste</button>
+          <span class="smh-pill ${esc(p.archived ? 'draft' : (p.summary?.composite_state || 'draft'))}">
+            ${esc(p.archived ? 'Archiviert' : (p.summary?.composite_label || 'Entwurf'))}
+          </span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="smh-btn" data-edit-post="${esc(p.id)}" data-step="2">✏️ Bearbeiten</button>
+          <button class="smh-btn primary" data-edit-post="${esc(p.id)}" data-step="3">🚀 Prüfen & Veröffentlichen</button>
+          <button class="smh-btn" data-single-move="${esc(p.id)}">📂 Verschieben</button>
+          <button class="smh-btn" data-single-duplicate="${esc(p.id)}">📄 Duplizieren</button>
+          <button class="smh-btn danger" data-single-delete="${esc(p.id)}">🗑️ Löschen</button>
+        </div>
+      </div>
+
+      <div class="smh-grid-composer">
+        <div class="smh-card">
+          <h2 style="margin:0 0 14px;font-size:20px;letter-spacing:-0.3px">${esc(p.title || 'Ohne Titel')}</h2>
+
+          ${media ? `
+            <div class="smh-detail-hero">
+              ${media.url ? `<img src="${esc(media.url)}" alt="${esc(media.alt_text || media.name || '')}">` : `<div style="padding:48px;font-size:44px">🖼️</div>`}
+            </div>
+            <div class="smh-hint" style="margin:-10px 0 16px">
+              Medium: <strong>${esc(media.name)}</strong> (${media.width_px || 1080}×${media.height_px || 1080}px)${media.alt_text ? ` · Alt-Text: „${esc(media.alt_text)}“` : ''}
+            </div>
+          ` : ''}
+
+          <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--smh-muted);margin-bottom:6px">Beitragstext (Caption & Hashtags)</div>
+          <div class="smh-detail-text">${esc(p.master_text || 'Noch kein Text eingetragen.')}</div>
+
+          ${p.external_url ? `
+            <div class="smh-alert" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+              <span><strong>Verknüpfter Link:</strong> <a href="${esc(p.external_url)}" target="_blank" rel="noopener">${esc(p.external_url)} ↗</a></span>
+            </div>
+          ` : ''}
+
+          <div class="smh-meta-strip">
+            <div class="smh-meta-box"><small>Ordner / Kampagne</small><strong>${esc(p.campaign || 'Allgemein')}</strong></div>
+            <div class="smh-meta-box"><small>Geplanter Termin</small><strong>${esc(formatDate(p.scheduled_at))}</strong></div>
+            <div class="smh-meta-box"><small>Zuletzt aktualisiert</small><strong>${esc(formatDate(p.updated_at || p.created_at))}</strong></div>
+          </div>
+        </div>
+
+        <div style="display:grid;gap:14px">
+          <div class="smh-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <h3 style="margin:0;font-size:15px">Ausgewählte Kanäle (${targets.length})</h3>
+              <button class="smh-btn sm" data-edit-post="${esc(p.id)}" data-step="1">Kanäle ändern</button>
+            </div>
+            ${targets.length ? targets.map(({ acc, check, v }) => {
+              const deliv = v.delivery_status || 'pending';
+              const isDone = deliv === 'published' || deliv === 'manual_confirmed';
+              const isFailed = ['failed', 'failed_permanent', 'failed_retryable'].includes(deliv);
+              const chStatus = channelStatusInfo(acc);
+              return `
+                <div class="smh-channel-item">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                      ${platBadge(acc.platform)}
+                      <div style="min-width:0">
+                        <strong style="display:block;font-size:13px">${esc(PLATFORMS[acc.platform]?.label || acc.platform)}</strong>
+                        <span class="smh-hint">${esc(acc.handle)} · Format: ${esc(v.format_key || 'Standard')}</span>
+                      </div>
+                    </div>
+                    <span class="smh-pill ${esc(isDone ? 'published' : (isFailed ? 'blocked' : chStatus.cls))}">
+                      ${esc(deliv === 'published' ? 'Veröffentlicht' : (deliv === 'manual_confirmed' ? 'Manuell bestätigt' : (isFailed ? 'Fehlgeschlagen' : chStatus.label)))}
+                    </span>
+                  </div>
+
+                  ${check.effective_text && check.effective_text !== p.master_text ? `
+                    <div style="font-size:12px;white-space:pre-wrap;background:#f7f9fd;border:1px solid var(--smh-line);border-radius:8px;padding:8px 10px;margin-bottom:8px">${esc(check.effective_text)}</div>
+                  ` : ''}
+
+                  ${(check.issues || []).map((iss) => `<div class="smh-alert danger" style="padding:7px 10px;margin-bottom:6px">✕ ${esc(iss)}</div>`).join('')}
+                  ${(check.advice || []).map((adv) => `<div class="smh-alert warn" style="padding:7px 10px;margin-bottom:6px">ℹ ${esc(adv)}</div>`).join('')}
+                  ${v.last_error ? `<div class="smh-alert danger" style="padding:7px 10px;margin-bottom:6px">✕ Letzter Versandfehler: ${esc(v.last_error)}</div>` : ''}
+                  ${deliv === 'published' && v.remote_url ? `<div class="smh-alert success" style="padding:7px 10px;margin-bottom:6px">✓ Live · <a href="${esc(v.remote_url)}" target="_blank" rel="noopener">Beitrag öffnen ↗</a></div>` : ''}
+
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                    ${['manual', 'handoff'].includes(check.method) ? `
+                      <button class="smh-btn sm" data-copy-text="${esc(check.effective_text || p.master_text)}">📋 Text kopieren</button>
+                      ${deliv !== 'manual_confirmed'
+                        ? `<button class="smh-btn sm success" data-open-manual-confirm="${esc(p.id)}" data-acc="${esc(acc.id)}">✓ Als veröffentlicht bestätigen</button>`
+                        : `<button class="smh-btn sm danger" data-revoke-manual="${esc(p.id)}" data-acc="${esc(acc.id)}">Bestätigung widerrufen</button>`
+                      }
+                    ` : ''}
+                    ${isFailed ? `<button class="smh-btn sm primary" data-retry-single="${esc(p.id)}" data-acc="${esc(acc.id)}">↻ Kanal erneut senden</button>` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('') : `<p class="smh-hint">Diesem Beitrag sind noch keine Kanäle zugeordnet.</p>`}
+          </div>
+
+          ${revisions.length ? `
+            <div class="smh-card">
+              <h3 style="margin:0 0 10px;font-size:14px">Dokumentierte Stände (Revisionen)</h3>
+              ${revisions.map((r) => `
+                <div class="smh-row" style="padding:8px 0">
+                  <span style="font-size:12px"><strong>Revision #${r.revision_number}</strong> (${esc(r.reason)})</span>
+                  <span class="smh-hint">${esc(formatDate(r.created_at))}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      </div>
     `;
   }
 
@@ -711,8 +919,7 @@
                 const manifest = state.manifests?.[a.platform] || {};
                 const formats = Object.entries(manifest.formats || {});
                 const v = wizard.variants[a.id] || {};
-                const st = a.capability_diagnosis?.status || 'unknown';
-                const statusText = st === 'ready' ? 'Verbunden' : (st === 'manual' ? 'Manuelle Übergabe' : (st === 'handoff' ? 'App-Fertigstellung' : (st === 'blocked' ? 'Zugang prüfen' : 'Noch nicht verbunden')));
+                const stInfo = channelStatusInfo(a);
                 return `
                   <div class="smh-channel-card ${chosen ? 'chosen' : ''}">
                     <label style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;cursor:pointer">
@@ -724,7 +931,7 @@
                           <span class="smh-hint">${esc(a.handle)}</span>
                         </div>
                       </div>
-                      <span class="smh-pill ${esc(st)}">${esc(statusText)}</span>
+                      <span class="smh-pill ${esc(stInfo.cls)}">${esc(stInfo.label)}</span>
                     </label>
                     ${chosen && formats.length ? `
                       <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--smh-line)">
@@ -973,7 +1180,13 @@
 
               ${(check.issues || []).map((iss) => `<div class="smh-alert danger" style="padding:8px 10px;margin-bottom:6px">✕ ${esc(iss)}</div>`).join('')}
               ${(check.advice || []).map((adv) => `<div class="smh-alert warn" style="padding:8px 10px;margin-bottom:6px">ℹ ${esc(adv)}</div>`).join('')}
-              ${!(check.issues || []).length && !isDone && !isFailed ? `<div class="smh-alert success" style="padding:8px 10px;margin-bottom:6px">✓ Verbindung & Format sind bereit.</div>` : ''}
+              ${!(check.issues || []).length && !isDone && !isFailed && ['ready', 'manual', 'handoff'].includes(check.key) ? `<div class="smh-alert success" style="padding:8px 10px;margin-bottom:6px">✓ ${check.key === 'ready' ? 'Live-Verbindung & Format sind bereit.' : 'Bereit für manuelle Übergabe / App-Abschluss.'}</div>` : ''}
+              ${['unknown', 'not_configured', 'blocked'].includes(check.key) && !isDone ? `
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                  <button class="smh-btn sm" data-test-channel="${esc(acc.id)}" ${testingChannelId === acc.id ? 'disabled' : ''}>${testingChannelId === acc.id ? '⏳ Prüfe live …' : '🔌 Verbindung live prüfen'}</button>
+                  <button class="smh-btn sm" data-edit-channel="${esc(acc.id)}">Zugangsdaten bearbeiten</button>
+                </div>
+              ` : ''}
 
               ${deliv === 'published' && v.remote_url ? `
                 <div class="smh-alert success" style="padding:8px 10px">✓ Live veröffentlicht · <a href="${esc(v.remote_url)}" target="_blank" rel="noopener">Beitrag ansehen ↗</a></div>
@@ -1070,11 +1283,12 @@
           </div>
           ${activeDayPosts.length ? activeDayPosts.map((p) => `
             <div class="smh-row">
-              <div>
+              <div class="smh-post-link-cell" data-open-detail="${esc(p.id)}" style="flex:1">
                 <strong>${esc(p.title)}</strong>
                 <div class="smh-hint">${esc(formatDate(p.scheduled_at))} · ${esc(p.campaign || 'Allgemein')}</div>
               </div>
               <div style="display:flex;gap:6px">
+                <button class="smh-btn sm" data-open-detail="${esc(p.id)}">Öffnen</button>
                 <button class="smh-btn sm" data-edit-post="${esc(p.id)}" data-step="2">Bearbeiten</button>
                 <button class="smh-btn sm" data-single-move="${esc(p.id)}">Termin verschieben</button>
               </div>
@@ -1214,22 +1428,40 @@
         </div>
 
         ${accounts.length ? accounts.map((a) => {
-          const st = a.capability_diagnosis?.status || 'unknown';
+          const stInfo = channelStatusInfo(a);
+          const isTesting = testingChannelId === a.id;
+          const diagMsg = a.last_check_message || a.capability_diagnosis?.reason || 'Noch nicht geprüft.';
+          const httpMeta = [
+            a.last_check_http_code ? `HTTP ${a.last_check_http_code}` : '',
+            a.last_check_endpoint ? a.last_check_endpoint : '',
+            a.last_checked_at ? `Geprüft: ${formatDate(a.last_checked_at)}` : '',
+          ].filter(Boolean).join(' · ');
           return `
-            <div class="smh-row">
-              <div style="display:flex;align-items:center;gap:12px;min-width:0">
-                ${platBadge(a.platform)}
-                <div style="min-width:0">
-                  <strong>${esc(a.handle)}</strong>
-                  <span class="smh-hint" style="margin-left:6px">(${esc(PLATFORMS[a.platform]?.label || a.platform)}${brands.length > 1 ? ` · ${esc(brandName(a.brand_id))}` : ''})</span>
-                  <div class="smh-hint">${esc(a.capability_diagnosis?.reason || '')} · Tresor: ${esc(a.security_redaction?.token_hint || 'Kein Token')}</div>
+            <div class="smh-channel-item">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:12px;min-width:0">
+                  ${platBadge(a.platform)}
+                  <div style="min-width:0">
+                    <strong>${esc(a.handle)}</strong>
+                    <span class="smh-hint" style="margin-left:6px">(${esc(PLATFORMS[a.platform]?.label || a.platform)}${brands.length > 1 ? ` · ${esc(brandName(a.brand_id))}` : ''})</span>
+                    <div class="smh-hint">
+                      Tresor: <strong>${esc(a.security_redaction?.has_access_token ? (a.security_redaction.token_hint || 'Schlüssel gespeichert') : 'Kein API-Schlüssel hinterlegt')}</strong>
+                      ${a.external_account_id ? ` · Konto-ID: <code>${esc(a.external_account_id)}</code>` : ''}
+                      ${a.instance_url ? ` · Instanz: ${esc(a.instance_url)}` : ''}
+                    </div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap">
+                  <span class="smh-pill ${esc(stInfo.cls)}">${esc(stInfo.label)}</span>
+                  <button class="smh-btn sm primary" data-test-channel="${esc(a.id)}" ${isTesting ? 'disabled' : ''}>${isTesting ? '⏳ Prüfe live …' : '🔌 Live prüfen'}</button>
+                  <button class="smh-btn sm" data-edit-channel="${esc(a.id)}">Zugangsdaten</button>
+                  <button class="smh-btn sm danger" data-delete-channel="${esc(a.id)}">✕</button>
                 </div>
               </div>
-              <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-                <span class="smh-pill ${esc(st)}">${esc(st === 'ready' ? 'Verbunden' : (st === 'manual' ? 'Manuell' : (st === 'handoff' ? 'App-Übergabe' : 'Prüfen')))}</span>
-                <button class="smh-btn sm" data-test-channel="${esc(a.id)}">Prüfen</button>
-                <button class="smh-btn sm" data-edit-channel="${esc(a.id)}">Bearbeiten</button>
-                <button class="smh-btn sm danger" data-delete-channel="${esc(a.id)}">✕</button>
+              <div class="smh-diag-box ${esc(stInfo.diagCls)}">
+                <strong>${stInfo.cls === 'ready' ? '✓ Echt verifiziert:' : (stInfo.cls === 'blocked' ? '✕ Live-Prüfung fehlgeschlagen:' : (stInfo.cls === 'manual' ? 'ℹ Manueller Modus:' : 'ℹ Status:'))}</strong>
+                ${esc(diagMsg)}
+                ${httpMeta ? `<div style="margin-top:4px;opacity:.82;font-size:11px">${esc(httpMeta)}</div>` : ''}
               </div>
             </div>
           `;
@@ -1414,11 +1646,17 @@
     if (activeModal.type === 'channel') {
       const a = activeModal.account;
       const isManual = ['whatsapp', 'signal'].includes(a.platform);
+      const cred = PLATFORM_CREDS[a.platform] || {
+        idLabel: 'Externe Konto-ID (optional)',
+        idPlaceholder: '',
+        tokenLabel: 'API-Schlüssel / Access Token',
+        tokenHint: 'Wird verschlüsselt gespeichert und live gegen die Plattform-API geprüft.',
+      };
       return `
         <div class="smh-overlay" data-close-modal="overlay">
           <div class="smh-modal">
             <div class="smh-modal-head">
-              <h3>${a.id ? 'Kanal bearbeiten' : 'Neuen Kanal anlegen'}</h3>
+              <h3>${a.id ? 'Kanal & Zugangsdaten bearbeiten' : 'Neuen Kanal anlegen'}</h3>
               <button class="smh-btn sm" data-close-modal="btn">✕</button>
             </div>
             <div class="smh-modal-body">
@@ -1429,7 +1667,7 @@
                 </select>
               </div>
               <div class="smh-field">
-                <label>Name / Handle des Kanals *</label>
+                <label>Anzeigename / Handle im Social Hub *</label>
                 <input id="smh-ch-handle" class="smh-input" value="${esc(a.handle || '')}" placeholder="z. B. @janbruening oder WhatsApp-Kanal Südwestpfalz">
               </div>
               ${a.platform === 'linkedin' ? `
@@ -1443,20 +1681,38 @@
               ` : ''}
               ${!isManual ? `
                 <div class="smh-field">
-                  <label>Zugangstoken / API-Schlüssel (optional – wird verschlüsselt gespeichert)</label>
-                  <input id="smh-ch-token" type="password" class="smh-input" placeholder="${a.security_redaction?.has_access_token ? 'Gespeichert (' + esc(a.security_redaction.token_hint) + ') – leer lassen zum Behalten' : 'Leer lassen für manuellen Übergabe-Modus'}">
-                  <span class="smh-hint">Wenn du noch keinen API-Token hinterlegst, kannst du den Kanal trotzdem schon als manuelles Ziel nutzen und später verbinden.</span>
+                  <label>Betriebsart</label>
+                  <select id="smh-ch-mode" class="smh-select">
+                    <option value="" ${a.connection_state !== 'manual' ? 'selected' : ''}>Echte API-Verbindung (mit Live-Prüfung)</option>
+                    <option value="manual" ${a.connection_state === 'manual' ? 'selected' : ''}>Vorerst als manuellen Übergabe-Kanal führen (ohne API-Schlüssel)</option>
+                  </select>
+                </div>
+                ${cred.needsInstance ? `
+                  <div class="smh-field">
+                    <label>Mastodon Instanz-URL *</label>
+                    <input id="smh-ch-instance" type="url" class="smh-input" value="${esc(a.instance_url || '')}" placeholder="https://mastodon.social">
+                  </div>
+                ` : ''}
+                <div class="smh-field">
+                  <label>${esc(cred.idLabel)}</label>
+                  <input id="smh-ch-ext-id" class="smh-input" value="${esc(a.external_account_id || '')}" placeholder="${esc(cred.idPlaceholder)}">
                 </div>
                 <div class="smh-field">
-                  <label>Verbindungsart</label>
-                  <select id="smh-ch-mode" class="smh-select">
-                    <option value="" ${a.connection_state !== 'manual' ? 'selected' : ''}>Automatisch (per API, sobald Token hinterlegt)</option>
-                    <option value="manual" ${a.connection_state === 'manual' ? 'selected' : ''}>Vorerst als manuellen Übergabe-Kanal führen</option>
-                  </select>
+                  <label>${esc(cred.tokenLabel)}</label>
+                  <input id="smh-ch-token" type="password" class="smh-input" autocomplete="new-password" placeholder="${a.security_redaction?.has_access_token ? 'Gespeichert (' + esc(a.security_redaction.token_hint) + ') – leer lassen zum Behalten' : 'Echten API-Token / Schlüssel einfügen (oder leer lassen)'}">
+                  <span class="smh-hint">${esc(cred.tokenHint)}</span>
+                  ${a.security_redaction?.has_access_token ? `
+                    <label style="display:flex;align-items:center;gap:7px;font-weight:500;font-size:12px;margin-top:4px;cursor:pointer;color:var(--smh-danger)">
+                      <input type="checkbox" id="smh-ch-clear-token"> Gespeicherten API-Schlüssel entfernen
+                    </label>
+                  ` : ''}
+                </div>
+                <div class="smh-alert" style="margin-bottom:0">
+                  <strong>Ehrlicher Live-Check:</strong> Ein Kanal wird erst dann als <em>„Live verbunden ✓“</em> markiert, wenn die Plattform-API den Schlüssel wirklich mit HTTP 200 bestätigt hat.
                 </div>
               ` : `<div class="smh-alert warn">WhatsApp-Kanäle und Signal werden über unseren einfachen Kopier- & Bestätigungs-Assistenten gepflegt.</div>`}
               ${(state.brands || []).length > 1 ? `
-                <div class="smh-field">
+                <div class="smh-field" style="margin-top:14px">
                   <label>Marke</label>
                   <select id="smh-ch-brand" class="smh-select">
                     ${state.brands.map((b) => `<option value="${esc(b.id)}" ${a.brand_id === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}
@@ -1466,7 +1722,7 @@
             </div>
             <div class="smh-modal-foot">
               <button class="smh-btn" data-close-modal="btn">Abbrechen</button>
-              <button class="smh-btn primary" data-modal-channel-save="1">Kanal speichern</button>
+              <button class="smh-btn primary" data-modal-channel-save="1">${isManual ? 'Kanal speichern' : 'Speichern & live prüfen'}</button>
             </div>
           </div>
         </div>
@@ -1558,11 +1814,12 @@
     const map = {
       dashboard: ['Übersicht', 'Alles Wichtige auf einen Blick'],
       posts: ['Beiträge', 'Erstellen, verwalten, verschieben und veröffentlichen'],
+      detail: ['Beitrags-Übersicht', 'Große Detailansicht & Kanal-Status'],
       wizard: [wizard?.id ? 'Beitrag bearbeiten' : 'Neuer Beitrag', `Schritt ${wizard?.step || 1} von 3`],
       calendar: ['Kalender', 'Geplante Beiträge nach Datum'],
       manual: ['Manuelle Übergaben', 'WhatsApp-Kanal, Signal & App-Fertigstellung'],
       media: ['Medien & Bausteine', 'Bilder, Videos und Hashtag-Vorlagen'],
-      channels: ['Kanäle & Marken', 'Plattform-Verbindungen und Arbeitsbereiche'],
+      channels: ['Kanäle & Marken', 'Echte Live-Verbindungen und Arbeitsbereiche'],
       settings: ['Einstellungen & Export', 'Backup, Umzug und Automatisierung'],
     };
     return map[view] || ['Social Media Hub', ''];
@@ -1581,6 +1838,7 @@
     const viewHtml = {
       dashboard: renderDashboard,
       posts: renderPostsList,
+      detail: renderPostDetail,
       wizard: renderWizard,
       calendar: renderCalendar,
       manual: renderManualHandoffs,
@@ -1609,7 +1867,7 @@
             <button class="smh-nav-btn ${view === 'dashboard' ? 'active' : ''}" data-nav="dashboard">
               <span class="smh-nav-left">${svg('home')} Übersicht</span>
             </button>
-            <button class="smh-nav-btn ${view === 'posts' ? 'active' : ''}" data-nav="posts">
+            <button class="smh-nav-btn ${view === 'posts' || view === 'detail' ? 'active' : ''}" data-nav="posts">
               <span class="smh-nav-left">${svg('list')} Beiträge</span>
               ${totalPosts ? `<span class="smh-nav-badge">${totalPosts}</span>` : ''}
             </button>
@@ -1721,6 +1979,13 @@
         return;
       }
 
+      // Große Beitrags-Detailansicht öffnen
+      const openDetailEl = e.target.closest('[data-open-detail]');
+      if (openDetailEl) {
+        openPostDetail(openDetailEl.dataset.openDetail);
+        return;
+      }
+
       // Beitrag bearbeiten / öffnen
       const editPostBtn = e.target.closest('[data-edit-post]');
       if (editPostBtn) {
@@ -1789,6 +2054,16 @@
         return;
       }
 
+      // Einzel-Duplizieren (z. B. aus der Detailansicht)
+      const singleDup = e.target.closest('[data-single-duplicate]');
+      if (singleDup) {
+        await api('/post-groups/bulk', 'POST', { action: 'duplicate', ids: [singleDup.dataset.singleDuplicate] });
+        showToast('Beitrag als neuen Entwurf dupliziert.');
+        view = 'posts';
+        render();
+        return;
+      }
+
       // Einzel-Verschieben
       const singleMove = e.target.closest('[data-single-move]');
       if (singleMove) {
@@ -1807,6 +2082,10 @@
           onConfirm: async () => {
             await api('/post-groups/bulk', 'POST', { action: 'delete', ids: [pid] });
             selectedPostIds.delete(pid);
+            if (activeDetailPostId === pid) {
+              activeDetailPostId = null;
+              view = 'posts';
+            }
             showToast('Beitrag wurde endgültig gelöscht.');
           },
         });
@@ -2013,9 +2292,17 @@
       }
       const testCh = e.target.closest('[data-test-channel]');
       if (testCh) {
-        const res = await api(`/accounts/${testCh.dataset.testChannel}/test`, 'POST', {});
-        showToast(`Status: ${res.diagnosis?.reason || 'Geprüft'}`);
+        const cid = testCh.dataset.testChannel;
+        testingChannelId = cid;
         render();
+        try {
+          const res = await api(`/accounts/${cid}/test`, 'POST', {});
+          const v = res.verification || {};
+          showToast(v.ok ? `✓ ${v.message || 'Live-Prüfung erfolgreich!'}` : `✕ ${v.message || res.diagnosis?.reason || 'Verbindung fehlgeschlagen.'}`);
+        } finally {
+          testingChannelId = null;
+          render();
+        }
         return;
       }
       const delCh = e.target.closest('[data-delete-channel]');
@@ -2102,9 +2389,14 @@
           platform,
           account_type: document.getElementById('smh-ch-type')?.value || undefined,
           handle,
+          external_account_id: document.getElementById('smh-ch-ext-id')?.value.trim() || '',
+          instance_url: document.getElementById('smh-ch-instance')?.value.trim() || '',
           access_token: document.getElementById('smh-ch-token')?.value.trim() || '',
+          clear_token: Boolean(document.getElementById('smh-ch-clear-token')?.checked),
           connection_state: document.getElementById('smh-ch-mode')?.value || '',
         };
+        const saveBtn = e.target.closest('[data-modal-channel-save]');
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Speichere & prüfe live …'; }
         const returnToWiz = activeModal.returnToWizard;
         const res = await api('/accounts', 'POST', payload);
         activeModal = null;
@@ -2112,7 +2404,13 @@
           if (!wizard.targets.includes(res.account_id)) wizard.targets.push(res.account_id);
           syncWizardVariants();
         }
-        showToast(`Kanal „${handle}“ gespeichert.`);
+        if (res?.verification) {
+          showToast(res.verification.ok
+            ? `✓ ${res.verification.message}`
+            : `✕ Gespeichert, aber Live-Check fehlgeschlagen: ${res.verification.message}`);
+        } else {
+          showToast(`Kanal „${handle}“ gespeichert.`);
+        }
         render();
         return;
       }
