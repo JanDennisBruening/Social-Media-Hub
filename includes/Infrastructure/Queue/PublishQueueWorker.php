@@ -56,6 +56,7 @@ class PublishQueueWorker
             throw new RuntimeException("Queue-Job {$jobId} nicht gefunden.");
         }
 
+        // Idempotenz-Garantie: Bereits veröffentlichte Jobs niemals erneut senden!
         if (($targetJob['job_status'] ?? '') === 'published') {
             return $targetJob;
         }
@@ -84,6 +85,22 @@ class PublishQueueWorker
         $encryptedSecrets = (string) ($account['encrypted_secrets'] ?? '');
         $decryptedSecrets = $encryptedSecrets !== '' ? $this->tokenSafe->decryptSecrets($encryptedSecrets) : [];
         $variant = (array) ($postGroup['variants'][$accountId] ?? []);
+
+        // Effektiven Text und primäre Medien-URL für den echten Live-Versand auflösen
+        $mediaIds = (array) ($variant['media_ids'] ?? []);
+        $resolvedMedia = [];
+        foreach ($mediaIds as $mediaId) {
+            $asset = $this->repositories->findMediaAsset((string) $mediaId);
+            if ($asset !== null) {
+                $resolvedMedia[] = $asset;
+            }
+        }
+        $validation = $provider->validateVariant($postGroup, $variant, $account, $resolvedMedia);
+        $variant['_post_group'] = $postGroup;
+        $variant['_effective_text'] = (string) ($validation['effective_text'] ?? ($postGroup['master_text'] ?? ''));
+        $variant['_media_url'] = isset($resolvedMedia[0]['url']) && trim((string) $resolvedMedia[0]['url']) !== ''
+            ? (string) $resolvedMedia[0]['url']
+            : null;
 
         $targetJob['attempt_count'] = ((int) ($targetJob['attempt_count'] ?? 0)) + 1;
         $targetJob['job_stage'] = 'uploading_and_publishing';
@@ -120,6 +137,7 @@ class PublishQueueWorker
             return $savedJob;
         }
 
+        // Fehlerbehandlung: Transiente Fehler (HTTP 429 / 5xx) vs. permanente Fehler (HTTP 401 / 403)
         $isRetryable = !empty($result['retryable']) && $targetJob['attempt_count'] < ((int) ($targetJob['max_attempts'] ?? 3));
         $targetJob['last_http_code'] = $result['http_code'];
         $targetJob['last_error_code'] = $result['error_code'] ?? 'delivery_error';

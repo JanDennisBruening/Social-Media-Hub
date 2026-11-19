@@ -18,6 +18,7 @@ use SocialMediaHub\Domain\PreflightService;
 use SocialMediaHub\Domain\PublicationService;
 use SocialMediaHub\Infrastructure\Database\Repositories;
 use SocialMediaHub\Infrastructure\Export\BackupExporter;
+use SocialMediaHub\Infrastructure\Http\LiveApiClient;
 use SocialMediaHub\Infrastructure\Queue\PublishQueueWorker;
 use SocialMediaHub\Infrastructure\Security\Capabilities;
 use SocialMediaHub\Infrastructure\Security\SignedMediaEndpoint;
@@ -32,6 +33,7 @@ class Plugin
     private EventBus $eventBus;
     private TokenSafe $tokenSafe;
     private SignedMediaEndpoint $signedMediaEndpoint;
+    private LiveApiClient $liveApiClient;
     private Repositories $repositories;
     private ProviderRegistry $providerRegistry;
     private PreflightService $preflightService;
@@ -54,8 +56,9 @@ class Plugin
         $this->eventBus = new EventBus();
         $this->tokenSafe = $customTokenSafe ?? new TokenSafe();
         $this->signedMediaEndpoint = new SignedMediaEndpoint();
+        $this->liveApiClient = new LiveApiClient();
         $this->repositories = $customRepositories ?? new Repositories($this->tokenSafe);
-        $this->providerRegistry = new ProviderRegistry($this->signedMediaEndpoint);
+        $this->providerRegistry = new ProviderRegistry($this->signedMediaEndpoint, $this->liveApiClient);
         $this->preflightService = new PreflightService($this->repositories, $this->providerRegistry);
         $this->queueWorker = new PublishQueueWorker(
             $this->repositories,
@@ -78,7 +81,8 @@ class Plugin
             $this->backupExporter,
             $this->signedMediaEndpoint,
             $this->tokenSafe,
-            $this->eventBus
+            $this->eventBus,
+            $this->liveApiClient
         );
         $this->adminPage = new AdminPage($this);
     }

@@ -3,7 +3,7 @@
  * Plugin Name:       Social Media Hub
  * Plugin URI:        https://jandesigndigital.de/plugins/social-media-hub
  * Description:       Eigenständiges, aufgeräumtes WordPress-Backend-Plugin zur geführten Erstellung, Vorprüfung, 1-Klick-Veröffentlichung, manuellen Übergabe (z. B. WhatsApp-Kanäle) und revisionssicheren Dokumentation von Social-Media-Beiträgen – inklusive Komplett-Export.
- * Version:           2.0.0
+ * Version:           2.1.0
  * Requires at least: 6.4
  * Requires PHP:      8.1
  * Author:            Jan Dennis Brüning
@@ -22,8 +22,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SMH_VERSION', '2.0.0');
-define('SMH_DB_VERSION', '2.0.0');
+define('SMH_VERSION', '2.1.0');
+define('SMH_DB_VERSION', '2.1.0');
 define('SMH_PLUGIN_FILE', __FILE__);
 define('SMH_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SMH_PLUGIN_URL', plugin_dir_url(__FILE__));

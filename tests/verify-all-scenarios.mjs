@@ -301,7 +301,7 @@ test('11. v2.0.0 Generalüberholung: Leerer Erststart, WP-Auto-Fold, 3-Schritt-W
   const appJs = fs.readFileSync(path.join(pluginRoot, 'assets/js/admin-app.js'), 'utf8');
   const mainPhp = fs.readFileSync(path.join(pluginRoot, 'social-media-hub.php'), 'utf8');
 
-  assert.ok(mainPhp.includes("define('SMH_VERSION', '2.0.0')"), 'Plugin-Version muss 2.0.0 sein');
+  assert.ok(mainPhp.includes("define('SMH_VERSION', '2.1.0')"), 'Plugin-Version muss 2.1.0 sein');
   assert.ok(repoPhp.includes('createEmptyWorkspaceState'), 'Sauberer leerer Grundbestand muss vorhanden sein');
   assert.ok(repoPhp.includes('isLegacyV1DemoState'), 'Automatische Bereinigung alter v1.0-Demo-Daten fehlt');
   assert.ok(repoPhp.includes("'post_groups'      => []"), 'Beitragsliste muss beim Erststart leer sein');
@@ -333,7 +333,26 @@ test('12. v2.0.0 Beitragsverwaltung: Mehrfachauswahl, Verschieben, Duplizieren &
   return 'Mehrfachauswahl, Verschieben (Ordner/Status/Termin/Marke), Duplizieren und 2-stufiges Löschen vollständig verifiziert.';
 });
 
-console.log('\n=== SOCIAL MEDIA HUB v2.0.0 · VERIFIKATIONSBERICHT ===');
+test('13. v2.1.0 Ehrliche Live-API-Prüfung (kein Fake-Verbunden) & Große Beitrags-Detailansicht', () => {
+  const liveClientPhp = fs.readFileSync(path.join(pluginRoot, 'includes/Infrastructure/Http/LiveApiClient.php'), 'utf8');
+  const repoPhp = fs.readFileSync(path.join(pluginRoot, 'includes/Infrastructure/Database/Repositories.php'), 'utf8');
+  const providerPhp = fs.readFileSync(path.join(pluginRoot, 'includes/Providers/ConfigurablePlatformProvider.php'), 'utf8');
+  const restPhp = fs.readFileSync(path.join(pluginRoot, 'includes/Rest/RestController.php'), 'utf8');
+  const appJs = fs.readFileSync(path.join(pluginRoot, 'assets/js/admin-app.js'), 'utf8');
+
+  assert.ok(liveClientPhp.includes('wp_remote_get') && liveClientPhp.includes('wp_remote_post'), 'LiveApiClient muss echte HTTP-Aufrufe über WP HTTP API nutzen');
+  assert.ok(liveClientPhp.includes('graph.instagram.com') && liveClientPhp.includes('graph.facebook.com'), 'Instagram/Facebook Live-Endpunkte fehlen');
+  assert.ok(!providerPhp.includes('example.com'), 'Fake-example.com-Veröffentlichungen müssen komplett entfernt sein');
+  assert.ok(providerPhp.includes('live_verified_at') && providerPhp.includes('not_configured'), 'Provider muss ungeprüfte und unkonfigurierte Konten ehrlich trennen');
+  assert.ok(repoPhp.includes("connectionState = 'not_configured'") && repoPhp.includes("connectionState = 'unverified'"), 'saveAccount darf Konten nicht blind auf connected setzen');
+  assert.ok(restPhp.includes('runAndPersistLiveVerification'), 'REST-Controller muss echte Live-Prüfung ausführen');
+  assert.ok(appJs.includes('function renderPostDetail') && appJs.includes('data-open-detail'), 'Große Beitrags-Detailansicht beim Anklicken fehlt');
+  assert.ok(appJs.includes('smh-diag-box') && appJs.includes('Live prüfen'), 'Sichtbare Live-Prüfdiagnose fehlt im Kanal-UI');
+
+  return 'Echte Live-API-Verifizierung (ohne Fake-Status/example.com) und große Beitrags-Detailansicht verifiziert.';
+});
+
+console.log('\n=== SOCIAL MEDIA HUB v2.1.0 · VERIFIKATIONSBERICHT ===');
 for (const r of results) {
   console.log(`✓ [BESTANDEN] ${r.name}\n  → ${r.detail}`);
 }

@@ -1,10 +1,19 @@
-# Social Media Hub – Eigenständiges WordPress-Plugin (`v2.0.0`)
+# Social Media Hub – Eigenständiges WordPress-Plugin (`v2.1.0`)
 
 Eigenständiges, aufgeräumtes WordPress-Backend-Plugin zur geführten Erstellung, Vorprüfung, 1-Klick-Veröffentlichung, manuellen Übergabe (z. B. WhatsApp-Kanäle) und revisionssicheren Dokumentation von Social-Media-Beiträgen – inklusive **Komplett-Export (JSON + CSV)**.
 
 ---
 
-## 1. Neu in Version 2.0.0 (Generalüberholung)
+## 1. Neu in Version 2.1.0
+
+- **Echte, ehrliche Live-API-Prüfung (`LiveApiClient`):**
+  - Kein Kanal wird mehr blind als „Verbunden“ angezeigt, wenn kein echter API-Schlüssel hinterlegt oder geprüft wurde.
+  - Beim Speichern mit Token sowie beim Klick auf **„Live prüfen“** führt WordPress (`wp_remote_get` / `wp_remote_post`) eine echte HTTPS-Anfrage gegen die jeweilige Plattform-API aus (Instagram/Meta Graph API, Facebook, LinkedIn, Threads, Pinterest, Bluesky, Mastodon, Telegram, TikTok) und zeigt das tatsächliche Ergebnis inkl. HTTP-Status und Original-Fehlermeldung direkt in der Kanal-Karte an.
+  - Auch beim Veröffentlichen gibt es keine simulierten `example.com`-Scheinergebnisse mehr: Ungeprüfte Kanäle werden ehrlich geblockt, verifizierte Kanäle senden über echte Plattform-Endpunkte.
+- **Große Beitrags-Detailübersicht per Direktklick:**
+  - Einzelne Beiträge lassen sich in der Beitragsliste, Übersicht und im Kalender direkt anklicken und öffnen eine große Detailansicht mit Vollbild-Vorschau, komplettem Text, Link, Metadaten, allen Kanal-Karten, Revisionen und Direkt-Aktionen (*Bearbeiten*, *Prüfen & Veröffentlichen*, *Verschieben*, *Duplizieren*, *Löschen*).
+
+## 2. Generalüberholung aus Version 2.0.0
 
 - **Sauberer Erststart ohne Demo-Müll:** Startet komplett leer und frei von Beispieleinträgen (alte unveränderte v1.0-Demo-Einträge werden beim Upgrade automatisch bereinigt).
 - **Automatisch reduzierte WordPress-Hauptnavigation:** Beim Öffnen von *Social Hub* klappt das WordPress-Seitenmenü automatisch ein (`body.folded`), sodass maximale Arbeitsfläche entsteht (weiterhin jederzeit über WordPress ein- und ausklappbar).
@@ -41,12 +50,12 @@ Eigenständiges, aufgeräumtes WordPress-Backend-Plugin zur geführten Erstellun
 
 ```text
 Plugin/social-media-hub/
-├── social-media-hub.php                              # WordPress-Plugin-Bootstrap & Autoloader (v2.0.0)
+├── social-media-hub.php                              # WordPress-Plugin-Bootstrap & Autoloader (v2.1.0)
 ├── uninstall.php                                     # Schutz vor unbeabsichtigtem Datenverlust beim Deinstallieren
 ├── README.md                                         # Dokumentation & Installationsanleitung
 ├── assets/
 │   ├── css/admin-app.css                             # Aufgeräumtes Design System (#17213A / #586EE7) & WP-Fold-Integration
-│   └── js/admin-app.js                               # REST-gebundene Admin-UI (3-Schritt-Assistent, Beitragsliste, Bulk & 2-Stufen-Löschen)
+│   └── js/admin-app.js                               # REST-gebundene Admin-UI (Detailansicht, 3-Schritt-Assistent, Beitragsliste, Bulk & 2-Stufen-Löschen)
 ├── includes/
 │   ├── Admin/AdminPage.php                           # WP-Admin-Menü, Auto-Fold (`admin_body_class`) & `wp_enqueue_media()`
 │   ├── Core/
@@ -61,6 +70,7 @@ Plugin/social-media-hub/
 │   │   │   ├── Schema.php                            # 10 Custom Tables (smh_brands ... smh_audit_events)
 │   │   │   └── Repositories.php                      # Sauberer leerer Grundbestand, v1->v2-Migration, Bulk Move/Duplicate/Delete
 │   │   ├── Export/BackupExporter.php                 # Portabler Komplett-Export (JSON + CSV) & Import-Validator
+│   │   ├── Http/LiveApiClient.php                    # Echte HTTPS-Live-Prüfungen & echte Plattform-Veröffentlichungen
 │   │   ├── Queue/PublishQueueWorker.php              # Asynchrone Zustellung & Exponential Backoff (60s/300s/1800s)
 │   │   └── Security/
 │   │       ├── Capabilities.php                      # 4 WP-Rollen/Capabilities & Marken-ACL
@@ -72,7 +82,7 @@ Plugin/social-media-hub/
 │   │   └── ProviderRegistry.php                      # Zentrale Plattform-Registry (11 Kanäle)
 │   └── Rest/RestController.php                       # Vollständige WP-REST-Endpunkte (`/wp-json/social-hub/v1/...`)
 └── tests/
-    └── verify-all-scenarios.mjs                      # Automatisierte Verifikations-Suite (12 Testgruppen)
+    └── verify-all-scenarios.mjs                      # Automatisierte Verifikations-Suite (13 Testgruppen)
 ```
 
 ---

@@ -3,6 +3,9 @@
  * Zentrale Steckmodul-Registry (ProviderRegistry) & deklarativer Plattform-Adapter für alle 11 Kanäle:
  * Instagram, Facebook, LinkedIn, Threads, TikTok, Pinterest, Bluesky, Mastodon, Telegram, WhatsApp-Kanal, Signal.
  *
+ * Hinweis: YouTube wird gemäß Produktschnitt nicht als Video-Upload-Ziel betrieben, sondern über die
+ * intelligente Link- & YouTube-Verweis-Logik auf allen Social-Kanälen beworben.
+ *
  * @package SocialMediaHub\Providers
  */
 
@@ -10,6 +13,7 @@ declare(strict_types=1);
 
 namespace SocialMediaHub\Providers;
 
+use SocialMediaHub\Infrastructure\Http\LiveApiClient;
 use SocialMediaHub\Infrastructure\Security\SignedMediaEndpoint;
 
 class ProviderRegistry
@@ -17,10 +21,12 @@ class ProviderRegistry
     /** @var array<string, ProviderInterface> */
     private array $providers = [];
     private SignedMediaEndpoint $signedMediaEndpoint;
+    private LiveApiClient $liveApiClient;
 
-    public function __construct(?SignedMediaEndpoint $signedMediaEndpoint = null)
+    public function __construct(?SignedMediaEndpoint $signedMediaEndpoint = null, ?LiveApiClient $liveApiClient = null)
     {
         $this->signedMediaEndpoint = $signedMediaEndpoint ?? new SignedMediaEndpoint();
+        $this->liveApiClient = $liveApiClient ?? new LiveApiClient();
         $this->registerDefaultProviders();
     }
 
@@ -55,7 +61,7 @@ class ProviderRegistry
     }
 
     /**
-     * Zählt Unicode-Grapheme exakt.
+     * Zählt Unicode-Grapheme exakt (statt fehleranfälligem `strlen`), damit Emojis und Umlaute korrekt gezählt werden.
      */
     public static function countGraphemes(string $text): int
     {
@@ -78,11 +84,13 @@ class ProviderRegistry
     {
         $specs = self::getDefaultPlatformSpecs();
         foreach ($specs as $key => $spec) {
-            $this->register(new ConfigurablePlatformProvider($key, $spec, $this->signedMediaEndpoint));
+            $this->register(new ConfigurablePlatformProvider($key, $spec, $this->signedMediaEndpoint, $this->liveApiClient));
         }
     }
 
     /**
+     * Deklarative Spezifikation der 11 Plattform-Steckmodule auf Basis des Plattform-Realitätschecks.
+     *
      * @return array<string, array<string, mixed>>
      */
     public static function getDefaultPlatformSpecs(): array
